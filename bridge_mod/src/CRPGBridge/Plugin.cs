@@ -21,6 +21,7 @@ namespace CRPGBridge
             int port = ParseIntEnv("CRPG_BRIDGE_PORT", 5555 + instanceId);
 
             _ipc = new IpcServer(port);
+            _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
             _ipc.Register("ping", req => new JObject());
             _ipc.Register("shutdown", HandleShutdown);
@@ -55,6 +56,10 @@ namespace CRPGBridge
 
         private void OnDestroy()
         {
+            // Should only fire at application exit. If it appears at startup, the
+            // engine swept the plugin object again — requires BepInEx.cfg
+            // HideManagerGameObject = true (the engine destroys unknown root objects).
+            Logger.LogWarning("plugin object destroyed — IPC going down");
             if (_ipc != null) _ipc.Dispose();
         }
 

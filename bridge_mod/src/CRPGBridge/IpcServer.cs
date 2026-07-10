@@ -28,6 +28,9 @@ namespace CRPGBridge
         private Thread _thread;
         private volatile bool _running;
 
+        /// <summary>Diagnostic sink; wired to the BepInEx logger by the plugin.</summary>
+        public Action<string> Log = delegate { };
+
         // Single-slot handoff between socket thread and main thread.
         private JObject _pendingRequest;
         private JObject _pendingResponse;
@@ -48,8 +51,10 @@ namespace CRPGBridge
             _running = true;
             _listener = new TcpListener(IPAddress.Loopback, _port);
             _listener.Start();
+            Log("listener started on " + _listener.LocalEndpoint);
             _thread = new Thread(SocketLoop) { IsBackground = true, Name = "CRPGBridge.Ipc" };
             _thread.Start();
+            Log("socket thread started, alive=" + _thread.IsAlive);
         }
 
         /// <summary>Call from Unity main thread every frame; executes at most one pending request.</summary>
@@ -113,18 +118,29 @@ namespace CRPGBridge
                 TcpClient client = null;
                 try
                 {
+                    Log("accepting on port " + _port);
                     client = _listener.AcceptTcpClient();
                     client.NoDelay = true;
+                    Log("client connected: " + client.Client.RemoteEndPoint);
                     ServeClient(client.GetStream());
+                    Log("client disconnected");
                 }
-                catch (SocketException)
+                catch (SocketException ex)
                 {
                     // Listener stopped or accept failed; exit if shutting down.
                     if (!_running) return;
+                    Log("SocketException in accept/serve: " + ex.Message);
+                    Thread.Sleep(500); // avoid a tight failure loop
                 }
-                catch (IOException)
+                catch (IOException ex)
                 {
                     // Client vanished mid-frame; go back to accepting.
+                    Log("IOException (client vanished): " + ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    Log("unexpected in socket loop: " + ex);
+                    Thread.Sleep(500);
                 }
                 finally
                 {
