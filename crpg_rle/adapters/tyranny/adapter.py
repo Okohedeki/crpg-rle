@@ -63,6 +63,7 @@ class TyrannyAdapter:
         self._target_faction: str | None = None
         self._visited_cells: set = set()
         self._last_pause_time = 0.0
+        self._tactical_rewarded = False
         self.config_driver = ConfigDriver(
             self.validate_build_spec(self.config.build_spec),
             death_mode=getattr(self.config, "death_mode", "terminal"),
@@ -135,19 +136,24 @@ class TyrannyAdapter:
         return float(self.config.explore_bonus)
 
     def _pause_reward(self, state: dict, action) -> float:
-        """Discourage the pause loop (small cost per pause press) but reward a
-        command issued while paused in combat (tactical pause)."""
+        """Discourage the pause loop (small cost per pause press) and reward a
+        command issued while paused in combat — ONCE per paused stretch, so it
+        can't be farmed by holding pause and spamming commands every step."""
         if action is None:
             return 0.0
         key = ACTION_KEYS[int(action[3])] if int(action[3]) < len(ACTION_KEYS) else ""
         button = int(action[2])
+        paused = bool(state.get("paused"))
         r = 0.0
         if key == "Space":
             r -= float(self.config.pause_penalty)
+        if not paused:
+            self._tactical_rewarded = False   # rearm once combat resumes
         is_command = button != 0 or key in ("Alpha1", "Alpha2", "Alpha3", "Alpha4",
                                              "Alpha5", "Alpha6", "Alpha7", "Alpha8", "Alpha9")
-        if state.get("paused") and state.get("in_combat") and is_command:
+        if paused and state.get("in_combat") and is_command and not self._tactical_rewarded:
             r += float(self.config.tactical_pause_bonus)
+            self._tactical_rewarded = True
         return r
 
     def gate_inputs(self, action, inputs: list[dict]) -> list[dict]:
@@ -234,6 +240,7 @@ class TyrannyAdapter:
         self.config_driver.reset()
         self._visited_cells = set()
         self._last_pause_time = 0.0
+        self._tactical_rewarded = False
         return {"target_faction": self._target_faction, "dialogue_seed": dialogue_seed}
 
     def validate_build_spec(self, spec: dict | None) -> dict | None:
