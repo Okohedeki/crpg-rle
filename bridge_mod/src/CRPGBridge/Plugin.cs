@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using HarmonyLib;
 using Newtonsoft.Json.Linq;
@@ -16,6 +17,8 @@ namespace CRPGBridge
 
         private IpcServer _ipc;
         private Harmony _harmony;
+        private bool _buildSetupOpen;
+        private bool _buildSetupLocked;
 
         private void Awake()
         {
@@ -54,6 +57,10 @@ namespace CRPGBridge
                 ["events"] = EventLog.Drain()
             });
             _ipc.Register("load", HandleLoad);
+            _ipc.Register("save", HandleSave);
+            _ipc.Register("build_begin", HandleBuildBegin);
+            _ipc.Register("build_lock", HandleBuildLock);
+            _ipc.Register("build_status", HandleBuildStatus);
             _ipc.Register("console", HandleConsole);
             _ipc.Register("diag_asm", HandleDiagAsm);
             _ipc.Register("start_conv", HandleStartConv);
@@ -66,6 +73,7 @@ namespace CRPGBridge
             _ipc.Register("creation_options", req => CreationChoices.ListOptions());
             _ipc.Register("creation_choose", req => CreationChoices.Choose(req["index"].Value<int>()));
             _ipc.Register("set_global", HandleSetGlobal);
+            _ipc.Register("get_global", HandleGetGlobal);
             _ipc.Register("stats", HandleStats);
             _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Register("diag_dialogue", HandleDiagDialogue);
@@ -363,10 +371,54 @@ namespace CRPGBridge
             return new JObject { ["accepted"] = accepted };
         }
 
-        /// <summary>console: {cmd: "..."} — debug/test lever; enables cheats on first use.</summary>
+        /// <summary>save: persist the initialized build to a run-specific save
+        /// before the verification reload.</summary>
+        private JObject HandleSave(JObject req)
+        {
+            if (!_buildSetupOpen || _buildSetupLocked)
+                return new JObject { ["ok"] = false, ["error"] = "build setup is not open" };
+            string file = req["file"].Value<string>();
+            string label = req["label"] != null ? req["label"].Value<string>() : "RL locked build";
+            bool saved = Game.GameResources.SaveGame(file, label, false);
+            return new JObject { ["saved"] = saved, ["file"] = file };
+        }
+
+        /// <summary>Open the one permitted mutation window for this process.</summary>
+        private JObject HandleBuildBegin(JObject req)
+        {
+            if (_buildSetupLocked)
+                return new JObject { ["ok"] = false, ["error"] = "build setup is permanently locked" };
+            _buildSetupOpen = true;
+            SDK.GameState.CheatsEnabled = true;
+            return HandleBuildStatus(req);
+        }
+
+        /// <summary>Permanently close build mutation until process restart.</summary>
+        private JObject HandleBuildLock(JObject req)
+        {
+            if (!_buildSetupOpen)
+                return new JObject { ["ok"] = false, ["error"] = "build setup was never opened" };
+            _buildSetupOpen = false;
+            _buildSetupLocked = true;
+            SDK.GameState.CheatsEnabled = false;
+            return HandleBuildStatus(req);
+        }
+
+        private JObject HandleBuildStatus(JObject req)
+        {
+            return new JObject
+            {
+                ["open"] = _buildSetupOpen,
+                ["locked"] = _buildSetupLocked,
+                ["cheats"] = SDK.GameState.CheatsEnabled
+            };
+        }
+
+        /// <summary>Available only inside the one-shot build setup window.</summary>
         private JObject HandleConsole(JObject req)
         {
-            SDK.GameState.CheatsEnabled = true;
+            if (!_buildSetupOpen || _buildSetupLocked)
+                return new JObject { ["ok"] = false, ["error"] = "build mutation is locked" };
             SDK.CommandLine.RunCommand(req["cmd"].Value<string>());
             return new JObject();
         }
@@ -418,6 +470,8 @@ namespace CRPGBridge
         /// outcomes etc. are globals; part of programmatic build application).</summary>
         private JObject HandleSetGlobal(JObject req)
         {
+            if (!_buildSetupOpen || _buildSetupLocked)
+                return new JObject { ["ok"] = false, ["error"] = "build mutation is locked" };
             var gv = GlobalVariables.Instance;
             if (gv == null) return new JObject { ["ok"] = false, ["error"] = "GlobalVariables not alive" };
             string name = req["name"].Value<string>();
@@ -426,8 +480,15 @@ namespace CRPGBridge
             return new JObject { ["name"] = name, ["value"] = gv.GetVariable(name) };
         }
 
-        /// <summary>stats: read the player's attributes, level, and all skills —
-        /// verification surface for programmatic build application.</summary>
+        private JObject HandleGetGlobal(JObject req)
+        {
+            var gv = GlobalVariables.Instance;
+            if (gv == null) return new JObject { ["ok"] = false, ["error"] = "GlobalVariables not alive" };
+            string name = req["name"].Value<string>();
+            return new JObject { ["name"] = name, ["value"] = gv.GetVariable(name) };
+        }
+
+        /// <summary>Read the player's build for persistence verification.</summary>
         private JObject HandleStats(JObject req)
         {
             var player = SDK.GameState.s_playerCharacter;
@@ -442,20 +503,33 @@ namespace CRPGBridge
                 catch { }
             }
             var skills = new JObject();
+            var skillRanks = new JObject();
             foreach (object v in Enum.GetValues(typeof(Game.CharacterStats.SkillType)))
             {
                 try
                 {
-                    int val = cs.CalculateSkill((Game.CharacterStats.SkillType)v);
+                    var skill = (Game.CharacterStats.SkillType)v;
+                    int val = cs.CalculateSkill(skill);
                     if (val != 0) skills[v.ToString()] = val;
+                    if (cs.IsConcreteSkill(skill)) skillRanks[v.ToString()] = cs.GetSkillRank(skill);
                 }
                 catch { }
+            }
+            var abilities = new JArray();
+            var knownAbilities = new List<MonoBehaviour>();
+            cs.PopulateListWithKnownAbilities(knownAbilities);
+            foreach (MonoBehaviour ability in knownAbilities)
+            {
+                if (ability != null && ability.gameObject != null)
+                    abilities.Add(ability.gameObject.name);
             }
             return new JObject
             {
                 ["level"] = cs.Level,
                 ["attributes"] = attrs,
-                ["skills_nonzero"] = skills
+                ["skills_nonzero"] = skills,
+                ["skill_ranks"] = skillRanks,
+                ["abilities"] = abilities
             };
         }
 

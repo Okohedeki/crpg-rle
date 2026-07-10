@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 
 import gymnasium as gym
 import numpy as np
@@ -52,6 +53,11 @@ class CRPGEnv(gym.Env):
         self._bridge: TcpBridgeClient | None = None
         self._hwnd = None
         self._steps = 0
+        self._boot_ready = False
+        self._run_initialized = False
+        self._run_save: str | None = None
+        self._run_build_spec: dict | None = None
+        self._build_info: dict = {"locked": False, "verified": False}
 
     # ------------------------------------------------------------------ setup
     def _ensure_process(self) -> None:
@@ -88,17 +94,79 @@ class CRPGEnv(gym.Env):
             time.sleep(0.5)
         return state
 
-    # --------------------------------------------------------------- gym API
-    def reset(self, *, seed: int | None = None, options: dict | None = None):
-        super().reset(seed=seed)
-        seed = seed if seed is not None else 0
-        self._ensure_process()
+    def _load_game(self, filename: str) -> dict:
+        """Load a save on boot or directly from a running episode."""
+        assert self._bridge is not None
+        if not self._boot_ready:
+            self._wait_menu()
+            self._boot_ready = True
+        accepted = False
+        for _ in range(30):
+            try:
+                accepted = bool(self._bridge.request("load", file=filename).get("accepted"))
+                if accepted:
+                    break
+            except Exception:
+                pass
+            time.sleep(1.0)
+        if not accepted:
+            raise RuntimeError(f"game refused to load save {filename!r}")
+        state = self._wait_loaded(want_party=True)
+        if state.get("loading") or not state.get("party"):
+            raise RuntimeError(f"save {filename!r} did not finish loading")
+        return state
 
-        episode_cfg = self.adapter.reset(seed)
-        self.rewards.reset()
-        self._steps = 0
+    def _initialize_run_build(self, base_save: str, spec: dict) -> dict:
+        """Apply, persist, reload, verify, and permanently lock one run build."""
+        assert self._bridge is not None
+        working = getattr(self.config, "working_save", None)
+        if not working:
+            working = f"RL_RUN_{self.config.instance_id}_{uuid.uuid4().hex}.savegame"
+        if working.casefold() == base_save.casefold():
+            raise ValueError("working_save must not overwrite save_start")
 
-        # Arm the per-episode dialogue randomizer (paraphrase swap + shuffle).
+        opened = self._bridge.request("build_begin")
+        if not opened.get("open") or opened.get("locked"):
+            raise RuntimeError("bridge did not open the build setup window")
+        try:
+            self.adapter.apply_build(self._bridge, spec)
+            before = self.adapter.snapshot_build(self._bridge, spec)
+            self.adapter.assert_build_matches_spec(before, spec)
+
+            saved = self._bridge.request("save", file=working, label="RL locked build")
+            if not saved.get("saved"):
+                raise RuntimeError(f"game refused to save initialized build as {working!r}")
+            state = self._load_game(working)
+
+            after = self.adapter.snapshot_build(self._bridge, spec)
+            self.adapter.assert_build_matches_spec(after, spec)
+            if getattr(self.config, "verify_build_reload", True):
+                self.adapter.assert_build_persisted(before, after)
+
+            locked = self._bridge.request("build_lock")
+            if not locked.get("locked") or locked.get("open") or locked.get("cheats"):
+                raise RuntimeError("bridge failed to lock build mutation")
+        except Exception:
+            try:
+                status = self._bridge.request("build_status")
+                if status.get("open") and not status.get("locked"):
+                    self._bridge.request("build_lock")
+            except Exception:
+                pass
+            raise
+
+        self._run_save = working
+        self._run_build_spec = spec
+        self._build_info = {
+            "locked": True,
+            "verified": True,
+            "working_save": working,
+        }
+        return state
+
+    def _arm_dialogue(self, episode_cfg: dict) -> None:
+        """Arm after loading; corpus I/O during boot can stall the old engine."""
+        assert self._bridge is not None
         dr = getattr(self.config, "dialogue_randomizer", False)
         corpus_path = getattr(self.config, "corpus_path", None)
         if dr and corpus_path:
@@ -109,32 +177,50 @@ class CRPGEnv(gym.Env):
                 corpus_path=corpus_path,
             )
 
+    # --------------------------------------------------------------- gym API
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        super().reset(seed=seed)
+        seed = seed if seed is not None else 0
+        self._ensure_process()
+
+        episode_cfg = self.adapter.reset(seed)
+        self.rewards.reset()
+        self._steps = 0
+
         if self.config.start_mode == "act1_save" and self.config.save_start:
-            self._wait_menu()
-            for _ in range(30):
-                try:
-                    if self._bridge.request("load", file=self.config.save_start).get("accepted"):
-                        break
-                except Exception:
-                    pass
-                time.sleep(1.0)
-            state = self._wait_loaded(want_party=True)
-            # Programmatic build on top of the base save (game-specific; the
-            # adapter translates the spec into engine calls). Per-episode spec
-            # via reset options wins over the config default.
-            spec = (options or {}).get("build_spec", getattr(self.config, "build_spec", None))
-            apply_build = getattr(self.adapter, "apply_build", None)
-            if apply_build is not None and spec:
-                apply_build(self._bridge, spec)
-                state = self._bridge.observe()["state"]
+            requested = (options or {}).get("build_spec", getattr(self.config, "build_spec", None))
+            validate = getattr(self.adapter, "validate_build_spec", None)
+            declared = validate(requested) if validate is not None else requested
+
+            if not self._run_initialized:
+                state = self._load_game(self.config.save_start)
+                if declared:
+                    state = self._initialize_run_build(self.config.save_start, declared)
+                else:
+                    self._run_save = self.config.save_start
+                    self._run_build_spec = declared
+                self._run_initialized = True
+            else:
+                if declared is not None and declared != self._run_build_spec:
+                    raise RuntimeError("build_spec is frozen for this training run")
+                assert self._run_save is not None
+                state = self._load_game(self._run_save)
         else:
-            # creation start: env scripts nav to New Game; agent drives creation.
+            if self._run_initialized:
+                raise RuntimeError("creation-mode run cannot be reset after initialization")
             self._wait_menu()
+            self._boot_ready = True
             self._bridge.request("new_game")
             state = self._wait_loaded(want_party=False)
+            self._run_initialized = True
 
+        self._arm_dialogue(episode_cfg)
         obs = self._build_obs(state)
-        info = {"target_faction": episode_cfg["target_faction"], "mode": int(self.adapter.mode(state))}
+        info = {
+            "target_faction": episode_cfg["target_faction"],
+            "mode": int(self.adapter.mode(state)),
+            "build": dict(self._build_info),
+        }
         return obs, info
 
     def step(self, action):

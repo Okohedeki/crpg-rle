@@ -72,6 +72,47 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
    obs, reward, done, trunc, info = env.step(env.action_space.sample())
    ```
 
+## One-shot run builds
+
+A training run can declare one build without entering the character-creation UI.
+On the first reset, the environment loads the pristine Act-1 save, validates and
+applies the declaration through Tyranny's engine, writes a uniquely named working
+save, reloads it, verifies the values, and permanently locks the bridge's build
+mutation operations. Later episode resets load only that frozen working save.
+The original `save_start` is never overwritten.
+
+```python
+build = {
+    "attributes": {"Might": 16, "Wits": 14},
+    "skills": {"Dodge": 25},
+    "abilities": ["Abl_PC_Power_Sunder"],
+    "reputation": [
+        {"faction": "ScarletChorus", "axis": "positive", "strength": 1}
+    ],
+    "globals": {"RL_BUILD": 1},
+}
+cfg = TyrannyConfig(
+    start_mode="act1_save",
+    save_start="<pristine>.savegame",
+    build_spec=build,
+)
+```
+
+For the Puffer host, pass inline JSON or a JSON file:
+
+```powershell
+python -m crpg_rle.puffer.run_env_server `
+  --save "<pristine>.savegame" `
+  --build-spec build.json
+```
+
+The declaration surface accepts attributes, base skill ranks, ability asset IDs,
+reputation adjustments, and global selectors. Identifiers and numeric bounds are
+validated before any console command is issued. A specific character-creation
+point-budget policy can be layered on the declaration generator; the environment
+currently enforces safe bounds and persistence, not a single prescribed build
+budget.
+
 ## Status / definition of done
 
 See `docs/DOD.md` for the build-brief §12 checklist mapped to evidence. Verified

@@ -66,9 +66,13 @@ class TyrannyConfig:
 
     # Programmatic character build applied on top of the loaded base save at
     # reset (attributes/skills/abilities/reputation/globals). See
-    # TyrannyAdapter.apply_build. Overridable per episode via
-    # reset(options={"build_spec": ...}) for sampled/agent-chosen builds.
+    # TyrannyAdapter.apply_build. The first reset freezes this declaration for
+    # the process; subsequent episode resets reuse the verified working save.
     build_spec: dict | None = None
+    # Optional run-save name. When omitted, CRPGEnv generates a unique name.
+    # The pristine save_start is never overwritten.
+    working_save: str | None = None
+    verify_build_reload: bool = True
 
     @property
     def port(self) -> int:

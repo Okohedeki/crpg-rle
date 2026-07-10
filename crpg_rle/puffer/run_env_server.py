@@ -12,11 +12,24 @@ Then on the Linux side: ./build.sh tyranny --float --cpu && puffer train tyranny
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
 from crpg_rle.adapters.tyranny.config import TyrannyConfig
 from crpg_rle.core.env import CRPGEnv
 from crpg_rle.core.env_server import EnvServer
+
+
+def _read_build_spec(value: str | None) -> dict | None:
+    if value is None:
+        return None
+    path = Path(value)
+    raw = path.read_text(encoding="utf-8") if path.is_file() else value
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("build spec must decode to a JSON object")
+    return parsed
 
 
 def main() -> None:
@@ -27,6 +40,16 @@ def main() -> None:
     ap.add_argument("--start-mode", choices=["creation", "act1_save"], default="act1_save")
     ap.add_argument("--save", default=None, help="savegame filename for act1_save start")
     ap.add_argument("--corpus", default=None, help="dialogue corpus path")
+    ap.add_argument(
+        "--build-spec",
+        default=None,
+        help="one-shot build JSON, either inline or a path to a JSON file",
+    )
+    ap.add_argument(
+        "--working-save",
+        default=None,
+        help="run-specific save name; generated automatically when omitted",
+    )
     ap.add_argument("--obs-width", type=int, default=84)
     ap.add_argument("--obs-height", type=int, default=84)
     ap.add_argument("--time-scale", type=float, default=1.0)
@@ -37,6 +60,8 @@ def main() -> None:
         start_mode=args.start_mode,
         save_start=args.save,
         corpus_path=args.corpus,
+        build_spec=_read_build_spec(args.build_spec),
+        working_save=args.working_save,
         obs_width=args.obs_width,
         obs_height=args.obs_height,
         time_scale=args.time_scale,
