@@ -55,6 +55,7 @@ namespace CRPGBridge
             _ipc.Register("new_game", HandleNewGame);
             _ipc.Register("to_menu", HandleToMenu);
             _ipc.Register("dialogue", HandleDialogue);
+            _ipc.Register("creation", HandleCreation);
             _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Register("diag_dialogue", HandleDiagDialogue);
             _ipc.Start();
@@ -95,6 +96,60 @@ namespace CRPGBridge
         {
             Game.GameState.LoadMainMenu(false);
             return new JObject();
+        }
+
+        /// <summary>creation: {action: "advance"|"regress"|"complete"|"set_name", name?}.
+        /// Scripts the character-creation wizard navigation (the env's job); the agent
+        /// makes the actual choices within each stage via cursor+click. Returns the
+        /// current stage and readiness so the driver knows when it can complete.</summary>
+        private JObject HandleCreation(JObject req)
+        {
+            var mgr = UICharacterCreationManager.Instance;
+            if (mgr == null) return new JObject { ["ok"] = false, ["error"] = "not in creation" };
+            string action = req["action"] != null ? req["action"].Value<string>() : "";
+            switch (action)
+            {
+                // PressOkay/PressBack are the validated Next/Back the real UI buttons
+                // use (they gate on valid stage choices); AdvanceStage is a naive counter.
+                case "advance": mgr.PressOkay(); break;
+                case "regress": mgr.PressBack(); break;
+                case "begin_conquest": mgr.BeginConquest(); break;
+                case "set_name": SetCreationName(mgr, req["name"] != null ? req["name"].Value<string>() : "Agent"); break;
+                case "complete":
+                    if (mgr.IsCharacterCreationReadyForCompletion())
+                        mgr.HandleCharacterCreationComplete();
+                    else
+                        return new JObject { ["ok"] = false, ["error"] = "not ready for completion" };
+                    break;
+                case "":
+                    break;
+                default:
+                    return new JObject { ["ok"] = false, ["error"] = "unknown creation action: " + action };
+            }
+            bool ready;
+            try { ready = mgr.IsCharacterCreationReadyForCompletion(); } catch { ready = false; }
+            return new JObject { ["stage"] = mgr.CurrentStage, ["last_stage"] = mgr.LastStage, ["ready"] = ready };
+        }
+
+        private static void SetCreationName(UICharacterCreationManager mgr, string name)
+        {
+            // The build character info lives at mgr.RootController.Character.Name; reach it
+            // by reflection to avoid coupling to the nested type.
+            try
+            {
+                var rootController = mgr.GetType().GetField("RootController",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                object controller = rootController != null ? rootController.GetValue(mgr) : null;
+                if (controller == null) return;
+                var charProp = controller.GetType().GetField("Character",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                object character = charProp != null ? charProp.GetValue(controller) : null;
+                if (character == null) return;
+                var nameField = character.GetType().GetField("Name",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                if (nameField != null) nameField.SetValue(character, name);
+            }
+            catch { }
         }
 
         /// <summary>dialogue: {active, seed, corpus_path?} — arm the per-episode

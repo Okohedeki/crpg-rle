@@ -43,7 +43,25 @@ namespace CRPGBridge
             s["conversation"] = ReadConversation();
             s["party"] = ReadParty();
             s["reputation"] = ReadReputation();
+            s["creation"] = ReadCreation();
             return s;
+        }
+
+        private static JObject ReadCreation()
+        {
+            var r = new JObject { ["active"] = false };
+            try
+            {
+                var mgr = UICharacterCreationManager.Instance;
+                if (mgr == null) return r;
+                r["active"] = true;
+                r["stage"] = mgr.CurrentStage;
+                r["last_stage"] = mgr.LastStage;
+                try { r["ready"] = mgr.IsCharacterCreationReadyForCompletion(); }
+                catch { r["ready"] = false; }
+            }
+            catch { }
+            return r;
         }
 
         private static bool SafePaused()
