@@ -68,6 +68,9 @@ class TyrannyConfig:
     # Keep-the-MC-on-screen: per-step penalty while the player character is not
     # inside the visible viewport (the agent interacts by clicking what it sees).
     offscreen_penalty: float = 0.02
+    # Scripted camera backstop: after this many consecutive off-screen steps the
+    # env snaps the camera back onto the MC via CameraControl (0 disables).
+    offscreen_recenter_steps: int = 20
 
     edict_fail_days: float = 0.0
 

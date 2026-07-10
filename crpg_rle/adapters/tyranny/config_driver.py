@@ -27,16 +27,19 @@ class ConfigDriver:
 
     def __init__(self, spec: dict | None, *, death_mode: str = "terminal",
                  death_penalty: float = 0.0, checkpoint_save: str | None = None,
-                 auto_unpause_steps: int = 0) -> None:
+                 auto_unpause_steps: int = 0, offscreen_recenter_steps: int = 0) -> None:
         self.spec = spec or {}
         self.death_mode = death_mode
         self.death_penalty = death_penalty
         self.checkpoint_save = checkpoint_save
         self.auto_unpause_steps = auto_unpause_steps
+        self.offscreen_recenter_steps = offscreen_recenter_steps
         self._levels_done: set[tuple[int, int]] = set()
         self._pending_penalty = 0.0
         self._was_dead = False
         self._paused_steps = 0
+        self._unpause_attempts = 0
+        self._offscreen_steps = 0
 
     def reset(self) -> None:
         """Per-episode reset of trigger bookkeeping (config itself is frozen)."""
@@ -44,6 +47,8 @@ class ConfigDriver:
         self._pending_penalty = 0.0
         self._was_dead = False
         self._paused_steps = 0
+        self._unpause_attempts = 0
+        self._offscreen_steps = 0
 
     def take_death_penalty(self) -> float:
         """Consume any pending MC-death penalty (added to the reward this step).
@@ -61,26 +66,52 @@ class ConfigDriver:
             return bridge.observe()
         if self._handle_stuck_pause(bridge, state):
             return bridge.observe()
+        if self._handle_offscreen(bridge, state):
+            return bridge.observe()
         return None
 
     # -------------------------------------------------- pause backstop (infra)
     def _handle_stuck_pause(self, bridge, state: dict) -> bool:
         """Unpausing is env infrastructure: if the game has sat paused for
-        auto_unpause_steps consecutive steps (the agent clicked the HUD pause
-        button and stalled), press Space ourselves and resume play."""
+        auto_unpause_steps consecutive steps, recover it ourselves. Alternate
+        Space (plain pause toggle) with Escape (closes the modal windows that
+        also pause the game and that Space cannot clear; the lockdown guards
+        keep Escape from reaching the quit/menu paths)."""
         if not state.get("paused") or state.get("in_creation"):
             self._paused_steps = 0
+            self._unpause_attempts = 0
             return False
         self._paused_steps += 1
         if self.auto_unpause_steps <= 0 or self._paused_steps < self.auto_unpause_steps:
             return False
+        key = "Space" if self._unpause_attempts % 2 == 0 else "Escape"
+        self._unpause_attempts += 1
         try:
-            bridge.request("act", inputs=[{"t": "key", "key": "Space", "action": "press"}],
+            bridge.request("act", inputs=[{"t": "key", "key": key, "action": "press"}],
                            frames=2)
             self._paused_steps = 0
             return True
         except Exception as exc:
-            logger.warning("auto-unpause failed: %s", exc)
+            logger.warning("auto-unpause (%s) failed: %s", key, exc)
+            return False
+
+    # ------------------------------------------------- camera backstop (infra)
+    def _handle_offscreen(self, bridge, state: dict) -> bool:
+        """Camera recovery is env infrastructure: if the MC has been scrolled out
+        of view for offscreen_recenter_steps consecutive steps, snap the camera
+        back onto the player (the offscreen penalty still teaches avoidance)."""
+        if state.get("player_on_screen") is not False:
+            self._offscreen_steps = 0
+            return False
+        self._offscreen_steps += 1
+        if self.offscreen_recenter_steps <= 0 or self._offscreen_steps < self.offscreen_recenter_steps:
+            return False
+        try:
+            bridge.request("recenter")
+            self._offscreen_steps = 0
+            return True
+        except Exception as exc:
+            logger.warning("camera recenter failed: %s", exc)
             return False
 
     # ------------------------------------------------------------- level-up (W4)

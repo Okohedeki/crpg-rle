@@ -74,6 +74,7 @@ class TyrannyAdapter:
             checkpoint_save=getattr(self.config, "working_save", None)
             or getattr(self.config, "save_start", None),
             auto_unpause_steps=getattr(self.config, "auto_unpause_steps", 0),
+            offscreen_recenter_steps=getattr(self.config, "offscreen_recenter_steps", 0),
         )
 
     # --- spaces --------------------------------------------------------------

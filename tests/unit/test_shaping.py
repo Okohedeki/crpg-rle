@@ -86,6 +86,30 @@ def test_auto_unpause_backstop():
     assert d._paused_steps == 0
 
 
+def test_offscreen_recenter_backstop():
+    from crpg_rle.adapters.tyranny.config_driver import ConfigDriver
+
+    class RecordBridge:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, op, **kw):
+            self.calls.append(op)
+            return {"ok": True}
+
+        def observe(self):
+            return {"state": {"player_on_screen": True}, "events": []}
+
+    d = ConfigDriver({}, offscreen_recenter_steps=2)
+    b = RecordBridge()
+    off = {"player_on_screen": False}
+    assert d.on_step(b, off, []) is None       # 1
+    assert d.on_step(b, off, []) is not None   # 2 -> recenter fires
+    assert "recenter" in b.calls
+    d.on_step(b, {"player_on_screen": True}, [])
+    assert d._offscreen_steps == 0             # visible resets the counter
+
+
 def test_action_stats_summary():
     from crpg_rle.train.buffer import action_stats
     actions = np.array([[0, 0, 2, 0], [1, 1, 2, 0], [0, 0, 0, 5]])

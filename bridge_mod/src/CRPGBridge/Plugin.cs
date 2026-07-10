@@ -81,6 +81,7 @@ namespace CRPGBridge
             _ipc.Register("levelup_skill", req => LevelUpChoices.ApplySkill(req["skill"].Value<string>(), req["delta"].Value<int>()));
             _ipc.Register("levelup_advance", req => LevelUpChoices.Advance(req["action"] != null ? req["action"].Value<string>() : "advance"));
             _ipc.Register("revive", HandleRevive);
+            _ipc.Register("recenter", HandleRecenter);
             _ipc.Register("set_global", HandleSetGlobal);
             _ipc.Register("get_global", HandleGetGlobal);
             _ipc.Register("stats", HandleStats);
@@ -441,6 +442,20 @@ namespace CRPGBridge
                 return new JObject { ["ok"] = false, ["error"] = "build mutation is locked" };
             SDK.CommandLine.RunCommand(req["cmd"].Value<string>());
             return new JObject();
+        }
+
+        /// <summary>recenter: scripted camera recovery (infrastructure). Snaps the
+        /// world camera back onto the player character via the engine's own
+        /// CameraControl.FocusOnPoint — used when the agent has edge-scrolled the
+        /// MC out of view and stalled.</summary>
+        private JObject HandleRecenter(JObject req)
+        {
+            var pc = SDK.GameState.s_playerCharacter;
+            if (pc == null) return new JObject { ["ok"] = false, ["error"] = "no player" };
+            var cam = CameraControl.Instance;
+            if (cam == null) return new JObject { ["ok"] = false, ["error"] = "no CameraControl" };
+            cam.FocusOnPoint(pc.transform.position, 0.2f);
+            return new JObject { ["recentered"] = true };
         }
 
         /// <summary>revive: scripted death recovery (infrastructure, not gameplay).
