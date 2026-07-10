@@ -37,6 +37,9 @@ namespace CRPGBridge
             Hooks.TelemetrySafety.Log = s => Logger.LogInfo("[telemetry] " + s);
             Hooks.TelemetrySafety.Install(_harmony);
 
+            Hooks.CreationSafety.Log = s => Logger.LogInfo("[creationsafety] " + s);
+            Hooks.CreationSafety.Install(_harmony);
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
@@ -123,12 +126,11 @@ namespace CRPGBridge
                 case "complete":
                     if (!mgr.IsCharacterCreationReadyForCompletion())
                         return new JObject { ["ok"] = false, ["error"] = "not ready for completion" };
-                    // NOTE: neither HandleCharacterCreationComplete nor a direct
-                    // CloseCharacterCreationOnComplete cleanly transitions when we reach
-                    // creation via LoadScene("LifePath") — Conquest/character infra is
-                    // half-initialized (ConquestLocation.ApplyReputationColor NREs). The
-                    // reliable template-build path is a pre-made Act-1-start save (see
-                    // docs/DOD.md). This call is kept for when that pipeline is finished.
+                    // Scripted completion via reflection does not cleanly transition
+                    // (bypassing normal boot leaves character/Conquest infra half-init).
+                    // The reliable infrastructure path is loading a pre-made Act-1-start
+                    // save (start_mode="act1_save"); see docs/DOD.md. Left as-is for when
+                    // the real-UI-driven creation flow is scripted.
                     mgr.HandleCharacterCreationComplete();
                     break;
                 case "":
