@@ -43,6 +43,9 @@ namespace CRPGBridge
             Hooks.CreationSafety.Log = s => Logger.LogInfo("[creationsafety] " + s);
             Hooks.CreationSafety.Install(_harmony);
 
+            Hooks.LockdownGuards.Log = s => Logger.LogInfo("[lockdown] " + s);
+            Hooks.LockdownGuards.Install(_harmony);
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
@@ -88,6 +91,10 @@ namespace CRPGBridge
         {
             Hooks.EventHooks.Tick();
             SpeedController.Tick();
+            // Belt-and-suspenders: cheats may only ever be on inside a scripted
+            // config window; force them off during agent play.
+            if (Hooks.Lockdown.AgentActive && SDK.GameState.CheatsEnabled)
+                SDK.GameState.CheatsEnabled = false;
             if (_ipc != null) _ipc.Pump();
         }
 
@@ -113,7 +120,10 @@ namespace CRPGBridge
         /// <summary>to_menu: return to the main menu (for a mid-episode reset).</summary>
         private JObject HandleToMenu(JObject req)
         {
-            Game.GameState.LoadMainMenu(false);
+            // Env-initiated return to menu: bypass the lockdown guard on LoadMainMenu.
+            Hooks.Lockdown.BridgeBypass = true;
+            try { Game.GameState.LoadMainMenu(false); }
+            finally { Hooks.Lockdown.BridgeBypass = false; }
             return new JObject();
         }
 
@@ -292,6 +302,8 @@ namespace CRPGBridge
 
         private JObject HandleShutdown(JObject req)
         {
+            // Env-initiated shutdown: bypass the lockdown guard on Application.Quit.
+            Hooks.Lockdown.BridgeBypass = true;
             Application.Quit();
             return new JObject();
         }
@@ -389,6 +401,7 @@ namespace CRPGBridge
             if (_buildSetupLocked)
                 return new JObject { ["ok"] = false, ["error"] = "build setup is permanently locked" };
             _buildSetupOpen = true;
+            Hooks.Lockdown.ConfigWindowOpen = true;
             SDK.GameState.CheatsEnabled = true;
             return HandleBuildStatus(req);
         }
@@ -399,6 +412,7 @@ namespace CRPGBridge
             if (!_buildSetupOpen)
                 return new JObject { ["ok"] = false, ["error"] = "build setup was never opened" };
             _buildSetupOpen = false;
+            Hooks.Lockdown.ConfigWindowOpen = false;
             _buildSetupLocked = true;
             SDK.GameState.CheatsEnabled = false;
             return HandleBuildStatus(req);
