@@ -14,6 +14,7 @@ import numpy as np
 from crpg_rle.core.modes import Mode
 from crpg_rle.core.rng import SplitMix64
 from crpg_rle.adapters.tyranny import config as C
+from crpg_rle.adapters.tyranny.config_driver import ConfigDriver
 from crpg_rle.adapters.tyranny.favor import FavorReward
 from crpg_rle.adapters.tyranny.milestones import MilestoneChain
 from crpg_rle.adapters.tyranny.mode_detect import detect_mode
@@ -27,7 +28,11 @@ ACTION_KEYS: list[str] = [
     "Alpha6", "Alpha7", "Alpha8", "Alpha9",
 ]
 
-_BUILD_KEYS = {"attributes", "skills", "abilities", "reputation", "globals"}
+_BUILD_KEYS = {
+    "attributes", "skills", "abilities", "reputation", "globals",
+    "specialization", "party", "levelups", "equipment", "consumables",
+    "spells", "formation", "talents",
+}
 _ATTRIBUTE_NAMES = {
     name.lower(): name
     for name in ("Might", "Finesse", "Quickness", "Vitality", "Wits", "Resolve")
@@ -55,6 +60,10 @@ class TyrannyAdapter:
         self.milestones = MilestoneChain(granularity=self.config.milestone_granularity)
         self.favor = FavorReward()
         self._target_faction: str | None = None
+        self.config_driver = ConfigDriver(
+            self.validate_build_spec(self.config.build_spec),
+            death_mode=getattr(self.config, "death_mode", "terminal"),
+        )
 
     # --- spaces --------------------------------------------------------------
     def action_key_list(self) -> list[str]:
@@ -94,6 +103,12 @@ class TyrannyAdapter:
 
     def terminal(self, state: dict) -> tuple[bool, str | None, float]:
         return self.milestones.terminal(state)
+
+    def intercept(self, bridge, state: dict, events: list[dict]) -> dict | None:
+        """Core hook: apply predefined config at scripted triggers between agent
+        actions (level-up, death recovery). Returns a fresh observe payload if it
+        acted, else None. All game-specific logic lives in the ConfigDriver."""
+        return self.config_driver.on_step(bridge, state, events)
 
     # --- learning metrics ----------------------------------------------------
     # Per-episode scalars surfaced to the trainer (PufferLib native logging). The
@@ -146,6 +161,7 @@ class TyrannyAdapter:
 
         self.milestones.reset()
         self.favor.reset(self._target_faction)
+        self.config_driver.reset()
         return {"target_faction": self._target_faction, "dialogue_seed": dialogue_seed}
 
     def validate_build_spec(self, spec: dict | None) -> dict | None:
@@ -213,6 +229,83 @@ class TyrannyAdapter:
         }
         if globals_spec:
             result["globals"] = globals_spec
+
+        # Extended dimensions (applied via the config-driver, UI-first). Validated
+        # for structure/safe identifiers here; engine-schema specifics land with
+        # the driver handlers (W4 level-up, equipment/formation etc.).
+        raw_spec = spec.get("specialization") or {}
+        if raw_spec:
+            if not isinstance(raw_spec, dict):
+                raise ValueError("specialization must be a mapping")
+            specialization = {
+                key: _identifier(raw_spec[key], f"specialization.{key}")
+                for key in ("primary", "secondary")
+                if raw_spec.get(key) is not None
+            }
+            if specialization:
+                result["specialization"] = specialization
+
+        raw_party = spec.get("party") or []
+        if not isinstance(raw_party, list):
+            raise ValueError("party must be a list")
+        party = list(dict.fromkeys(_identifier(v, "party member") for v in raw_party))
+        if party:
+            result["party"] = party
+
+        raw_levelups = spec.get("levelups") or []
+        if not isinstance(raw_levelups, list):
+            raise ValueError("levelups must be a list")
+        levelups: list[dict[str, Any]] = []
+        seen_levels: set[int] = set()
+        for index, entry in enumerate(raw_levelups):
+            if not isinstance(entry, dict):
+                raise ValueError(f"levelups[{index}] must be a mapping")
+            level = _int_value(entry.get("level"), f"levelups[{index}].level", 2, 99)
+            if level in seen_levels:
+                raise ValueError(f"duplicate levelups entry for level {level}")
+            seen_levels.add(level)
+            lu: dict[str, Any] = {"level": level}
+            lu_skills = entry.get("skills") or {}
+            if not isinstance(lu_skills, dict):
+                raise ValueError(f"levelups[{index}].skills must be a mapping")
+            skills = {
+                _identifier(n, "skill name"): _int_value(v, f"skill {n}", 0, 200)
+                for n, v in lu_skills.items()
+            }
+            if skills:
+                lu["skills"] = skills
+            lu_abilities = entry.get("abilities") or []
+            if not isinstance(lu_abilities, list):
+                raise ValueError(f"levelups[{index}].abilities must be a list")
+            abilities = list(dict.fromkeys(_identifier(v, "ability name") for v in lu_abilities))
+            if abilities:
+                lu["abilities"] = abilities
+            levelups.append(lu)
+        if levelups:
+            levelups.sort(key=lambda e: e["level"])
+            result["levelups"] = levelups
+
+        for list_key in ("equipment", "spells", "talents"):
+            raw_list = spec.get(list_key) or []
+            if not isinstance(raw_list, list):
+                raise ValueError(f"{list_key} must be a list")
+            items = list(dict.fromkeys(_identifier(v, f"{list_key} item") for v in raw_list))
+            if items:
+                result[list_key] = items
+
+        raw_consumables = spec.get("consumables") or {}
+        if not isinstance(raw_consumables, dict):
+            raise ValueError("consumables must be a mapping")
+        consumables = {
+            _identifier(n, "consumable"): _int_value(v, f"consumable {n}", 1, 99)
+            for n, v in raw_consumables.items()
+        }
+        if consumables:
+            result["consumables"] = consumables
+
+        if spec.get("formation") is not None:
+            result["formation"] = _identifier(spec.get("formation"), "formation")
+
         return result
 
     def snapshot_build(self, bridge, spec: dict) -> dict:

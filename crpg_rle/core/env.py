@@ -238,6 +238,18 @@ class CRPGEnv(gym.Env):
 
         state = resp["state"]
         events = resp.get("events", [])
+
+        # Scripted infrastructure between agent actions: the adapter may detect a
+        # config-needed moment (level-up screen, party wipe, ...) and apply the
+        # predefined choice/recovery through the bridge, then re-observe. The core
+        # stays game-agnostic — it only merges whatever fresh obs/events it gets.
+        intercept = getattr(self.adapter, "intercept", None)
+        if callable(intercept):
+            reobs = intercept(self._bridge, state, events)
+            if reobs is not None:
+                state = reobs.get("state", state)
+                events = events + list(reobs.get("events", []))
+
         mode = self.adapter.mode(state)
         self._mode_counts[int(mode)] = self._mode_counts.get(int(mode), 0) + 1
 

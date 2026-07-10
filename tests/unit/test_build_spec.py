@@ -59,6 +59,39 @@ def test_validate_build_spec_canonicalizes_and_rejects_command_injection():
         adapter.validate_build_spec({"unlocked_again": True})
 
 
+def test_validate_build_spec_extended_sections():
+    adapter = TyrannyAdapter()
+    spec = adapter.validate_build_spec({
+        "specialization": {"primary": "Spec_TwoHanded"},
+        "party": ["Companion_Verse", "Companion_Verse", "Companion_Barik"],
+        "levelups": [
+            {"level": 3, "skills": {"Dodge": 2}, "abilities": ["Abl_Cleave"]},
+            {"level": 2, "skills": {"Parry": 1}},
+        ],
+        "equipment": ["Item_Sword", "Item_Sword"],
+        "consumables": {"Potion_Heal": 5},
+        "formation": "Formation_Line",
+    })
+    assert spec["specialization"] == {"primary": "Spec_TwoHanded"}
+    assert spec["party"] == ["Companion_Verse", "Companion_Barik"]
+    # levelups sorted by ascending level
+    assert [e["level"] for e in spec["levelups"]] == [2, 3]
+    assert spec["levelups"][1]["abilities"] == ["Abl_Cleave"]
+    assert spec["equipment"] == ["Item_Sword"]
+    assert spec["consumables"] == {"Potion_Heal": 5}
+    assert spec["formation"] == "Formation_Line"
+
+
+def test_validate_build_spec_extended_rejects_bad_input():
+    adapter = TyrannyAdapter()
+    with pytest.raises(ValueError, match="duplicate levelups"):
+        adapter.validate_build_spec({"levelups": [{"level": 3}, {"level": 3}]})
+    with pytest.raises(ValueError, match="between 2 and 99"):
+        adapter.validate_build_spec({"levelups": [{"level": 1}]})
+    with pytest.raises(ValueError, match="safe game identifier"):
+        adapter.validate_build_spec({"party": ["good; quit"]})
+
+
 def test_build_verification_detects_reload_drift():
     adapter = TyrannyAdapter()
     spec = {
