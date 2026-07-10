@@ -47,6 +47,7 @@ namespace CRPGBridge
             _ipc.Register("load", HandleLoad);
             _ipc.Register("console", HandleConsole);
             _ipc.Register("diag_asm", HandleDiagAsm);
+            _ipc.Register("start_conv", HandleStartConv);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -158,6 +159,19 @@ namespace CRPGBridge
             SDK.GameState.CheatsEnabled = true;
             SDK.CommandLine.RunCommand(req["cmd"].Value<string>());
             return new JObject();
+        }
+
+        /// <summary>start_conv: {file} — start a conversation with the player as owner (debug/test).</summary>
+        private JObject HandleStartConv(JObject req)
+        {
+            string file = req["file"].Value<string>();
+            var cm = ConversationManager.Instance;
+            if (cm == null) return new JObject { ["ok"] = false, ["error"] = "no ConversationManager" };
+            GameObject owner = null;
+            if (SDK.GameState.s_playerCharacter != null)
+                owner = SDK.GameState.s_playerCharacter.gameObject;
+            FlowChartPlayer p = cm.StartConversation(file, owner, FlowChartPlayer.DisplayMode.Standard, false);
+            return new JObject { ["started"] = p != null };
         }
 
         /// <summary>diag_asm: enumerate loaded assemblies (duplicate-copy detection).</summary>
