@@ -1,0 +1,38 @@
+# Definition of Done — build brief §12
+
+Each v1 done-criterion, its status, and the evidence.
+
+| # | Criterion (brief §12) | Status | Evidence |
+|---|---|---|---|
+| 1 | `TyrannyAdapter` runs a full Act 1 episode driven by player-input actions, from creation to milestone 9 (or timer-failure), on the live game | Env lifecycle proven end-to-end; a *policy* is out of scope (we build the env, not the agent) | `CRPGEnv` reset→step verified live (non-black pixels, reward channels, combat entered by random actions). Creation-start reset reaches character creation (LifePath) in ~7s; save-start reset in ~5s. Milestone chain fires on detected events (unit-tested + live event stream). Reaching milestone 9 requires a trained agent. |
+| 2 | Observation includes screen (± structured state) + mode flag + goal vector | Done | `crpg_rle/core/spaces.py` builds `Dict{pixels, state, mode, goal}`; live capture non-black; `test_spaces.py`, `test_state_schema.py`. |
+| 3 | Reward emits milestone events + goal-conditioned faction favor on separate channels, dialogue randomizer active with tag-consistency safeguard | Done | `reward.py` (channels), `milestones.py`, `favor.py` (dialogue-only, target-faction); randomizer live-verified (paraphrase swap across seeds); safeguard = `verify_tags.tags_consistent` (blind re-tag). `test_milestones.py`, `test_favor.py`, `test_randomizer.py`. |
+| 4 | `reset()` restores a clean Act 1 start faster than a cold launch; time-scaling and (ideally) parallel instances work | Done (single-instance); parallel parked | Save-load reset median **4.7s** vs ~2–3 min cold launch; new-game reset ~7s; **4× time-scale** confirmed. Multi-instance is task #9 (design in place: per-instance ports/save dirs). |
+| 5 | Core contains zero Tyranny-specific logic | Done | `tests/unit/test_core_purity.py` (grep + import-isolation). |
+
+## Reward model conformance (brief §6)
+
+- Exactly two sources: milestone (sparse backbone) + goal-conditioned target-faction favor. Separate logged channels, summed with configurable weights (`RewardChannels`, `info["reward_channels"]`).
+- Faction favor counted only in dialogue mode (prevents non-dialogue leakage).
+- Everything else (build, skill tree, movement) unrewarded; combat only where a milestone gates it.
+
+## Dialogue randomizer conformance (brief §9)
+
+- Attribute-tagged options along 4 semantic axes (`pipeline/tag_options.py`).
+- Per-episode paraphrase + shuffle applied by the mod pre-render, invisible to the agent (`DialogueInterceptor` + seeded `SplitMix64`; C#↔Python RNG parity live-verified).
+- Favor from tag→faction alignment matrix in the corpus; agent sees only paraphrased text (in pixels), never tags/deltas/originals — the structured observation carries no dialogue text at all.
+- Safeguard: blind re-tag consistency check rejects paraphrases that drift a tag (`verify_tags.py`).
+
+## Engine interface (brief §10) — de-risk order proven
+
+1. **State read + input injection on the live game** — ✅ (party movement via right-click, dialogue selection via number key, live state stream).
+2. **Detect a milestone event and a mode** — ✅ (quest/reputation/global-var/area/combat event stream; mode detection).
+3. **Reset fast and run above 1× time-scale** — ✅ (reset ~5s, 4× time-scale).
+
+## Deferred (tracked as follow-ups)
+
+- Multi-instance (task #9) — v1 is single-instance per user decision.
+- WSL2/Linux `_C.so` build + PuffeRL smoke run (task #11) — needs a CUDA Linux host; shim + protocol done and unit-tested.
+- Click-to-select dialogue options (task #10) — number-key selection works and is the agent's interface.
+- Full corpus generation — pipeline built; needs `ANTHROPIC_API_KEY` to tag/paraphrase all 1203 options (demo corpus proves the mechanism).
+- Milestone detectors have playtest-TODO refinements (camp-1 vs camp-2 distinction, faction-commit var) noted in `milestones.py`.
