@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crpg-rle"
+version = "0.1.0"
+description = "Reinforcement learning environment exposing Act 1 of the CRPG Tyranny as a learning problem."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "crpg-rle contributors" }]
+dependencies = [
+    "gymnasium==0.29.1",
+    "numpy<2",
+    "opencv-python",
+    "pywin32",
+    "psutil",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+pipeline = ["anthropic", "pydantic"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["crpg_rle*"]
