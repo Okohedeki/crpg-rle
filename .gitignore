@@ -34,3 +34,9 @@ configs/local.*.yaml
 Thumbs.db
 .vscode/
 .idea/
+
+# PufferLib 4.0 fork clone: track only our authored shim, not upstream
+puffer_fork/*
+!puffer_fork/ocean/
+puffer_fork/ocean/*
+!puffer_fork/ocean/tyranny/
