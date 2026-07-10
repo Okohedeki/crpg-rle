@@ -38,6 +38,7 @@ namespace CRPGBridge
                 ["area"] = SDK.GameState.LoadedLevelName ?? "",
                 ["in_creation"] = InCreation(),
                 ["cheats"] = SDK.GameState.CheatsEnabled,
+                ["player_dead"] = PlayerDead(),
             };
 
             s["conversation"] = ReadConversation();
@@ -127,6 +128,20 @@ namespace CRPGBridge
         private static bool InCreation()
         {
             try { return UICharacterCreationManager.Instance != null; }
+            catch { return false; }
+        }
+
+        /// <summary>Whether the main character (player) is dead — the signal for
+        /// the deathless-MC reward. MC death is game-over in Tyranny.</summary>
+        private static bool PlayerDead()
+        {
+            try
+            {
+                var pc = SDK.GameState.s_playerCharacter;
+                if (pc == null) return false;
+                var health = pc.GetComponent<Game.Health>();
+                return health != null && health.Dead;
+            }
             catch { return false; }
         }
 

@@ -52,7 +52,7 @@ def test_full_env_episode():
             modes_seen.add(info["mode"])
             if "reward_channels" in info:
                 reward_channels_present = True
-                assert set(info["reward_channels"]) <= {"milestone", "faction_favor", "recovery"}
+                assert set(info["reward_channels"]) <= {"milestone", "faction_favor", "death"}
             assert obs["mode"] in range(Mode.count())
             if done:
                 break

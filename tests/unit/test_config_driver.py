@@ -111,13 +111,13 @@ class RecordBridge:
 
 
 def test_death_revive_recovers_and_penalizes_once():
-    d = ConfigDriver({}, death_mode="revive", recovery_penalty=-2.0)
+    d = ConfigDriver({}, death_mode="revive", death_penalty=-2.0)
     b = RecordBridge()
-    reobs = d.on_step(b, {"party_dead": True}, [])
+    reobs = d.on_step(b, {"player_dead": True}, [])
     assert ("revive", {}) in b.calls
     assert reobs is not None
-    assert d.take_recovery_penalty() == -2.0
-    assert d.take_recovery_penalty() == 0.0  # charged exactly once
+    assert d.take_death_penalty() == -2.0
+    assert d.take_death_penalty() == 0.0  # charged exactly once
 
 
 def test_death_checkpoint_reloads_save():
@@ -145,17 +145,29 @@ def test_adapter_death_mode_terminal_semantics():
     assert a2.terminal({})[:2] == (True, "success")
 
 
-def test_adapter_reward_recovery_channel():
+def test_adapter_reward_death_channel():
     from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
     from crpg_rle.core.modes import Mode
 
     a = TyrannyAdapter()
     a.reset(0)
-    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == 0.0
-    # after a recovery the penalty flows through the recovery channel once
+    assert a.reward(Mode.OVERWORLD, [], {})["death"] == 0.0
+    # a death charges the penalty through the death channel exactly once
     a.config_driver._pending_penalty = -1.5
-    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == -1.5
-    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == 0.0
+    assert a.reward(Mode.OVERWORLD, [], {})["death"] == -1.5
+    assert a.reward(Mode.OVERWORLD, [], {})["death"] == 0.0
+
+
+def test_death_penalty_charged_on_rising_edge_only():
+    d = ConfigDriver({}, death_mode="revive", death_penalty=-10.0)
+    b = RecordBridge()
+    # first dead step charges once; revive clears the edge
+    d.on_step(b, {"player_dead": True}, [])
+    assert d.take_death_penalty() == -10.0
+    # a step with the MC alive again, then a new death charges again
+    d.on_step(b, {"player_dead": False}, [])
+    d.on_step(b, {"player_dead": True}, [])
+    assert d.take_death_penalty() == -10.0
 
 
 def test_intercept_hook_merges_reobserved_state():

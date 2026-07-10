@@ -26,22 +26,24 @@ class ConfigDriver:
     """Owns the frozen run config and applies it via scripted triggers."""
 
     def __init__(self, spec: dict | None, *, death_mode: str = "terminal",
-                 recovery_penalty: float = 0.0, checkpoint_save: str | None = None) -> None:
+                 death_penalty: float = 0.0, checkpoint_save: str | None = None) -> None:
         self.spec = spec or {}
         self.death_mode = death_mode
-        self.recovery_penalty = recovery_penalty
+        self.death_penalty = death_penalty
         self.checkpoint_save = checkpoint_save
         self._levels_done: set[tuple[int, int]] = set()
         self._pending_penalty = 0.0
+        self._was_dead = False
 
     def reset(self) -> None:
         """Per-episode reset of trigger bookkeeping (config itself is frozen)."""
         self._levels_done = set()
         self._pending_penalty = 0.0
+        self._was_dead = False
 
-    def take_recovery_penalty(self) -> float:
-        """Consume any pending death-recovery penalty (added to the reward this
-        step). Cleared on read so it is charged exactly once per recovery."""
+    def take_death_penalty(self) -> float:
+        """Consume any pending MC-death penalty (added to the reward this step).
+        Cleared on read so it is charged exactly once per death."""
         penalty = self._pending_penalty
         self._pending_penalty = 0.0
         return penalty
@@ -122,20 +124,23 @@ class ConfigDriver:
 
     # -------------------------------------------------------- death recovery (W5)
     def _handle_death(self, bridge, state: dict) -> bool:
-        """Recover from a party wipe instead of ending the episode. In
-        "checkpoint" mode reload the run save; otherwise heal in place ("revive").
-        The env's milestone terminal is made non-terminal for these modes, so this
-        must run (via the intercept) before the terminal check each step."""
-        if self.death_mode == "terminal":
-            return False
-        if not (state.get("party_dead") or state.get("game_over")):
+        """Charge the MC-death penalty (once, on the rising edge) and, unless
+        death_mode is "terminal", recover so the episode continues — training
+        toward a deathless MC. Runs via the intercept before the terminal check."""
+        dead = bool(state.get("player_dead") or state.get("party_dead")
+                    or state.get("game_over"))
+        if dead and not self._was_dead:
+            self._pending_penalty += self.death_penalty   # deaths are negative reward
+        self._was_dead = dead
+
+        if self.death_mode == "terminal" or not dead:
             return False
         try:
             if self.death_mode == "checkpoint" and self.checkpoint_save:
                 bridge.request("load", file=self.checkpoint_save)
             else:
                 bridge.request("revive")
-            self._pending_penalty += self.recovery_penalty
+            self._was_dead = False  # revived — ready to detect the next death
             return True
         except Exception as exc:
             logger.warning("death recovery (%s) failed: %s", self.death_mode, exc)

@@ -43,7 +43,7 @@ class TyrannyConfig:
 
     milestone_granularity: str = "coarse"   # "coarse" | "fine"
     reward_weights: dict[str, float] = field(
-        default_factory=lambda: {"milestone": 1.0, "faction_favor": 1.0, "recovery": 1.0}
+        default_factory=lambda: {"milestone": 1.0, "faction_favor": 1.0, "death": 1.0}
     )
 
     edict_fail_days: float = 0.0
@@ -55,9 +55,11 @@ class TyrannyConfig:
     # Default "revive": self-contained (no save plumbing) and directly fixes the
     # "exit at first combat" symptom so gameplay is watchable past Edgering.
     death_mode: str = "revive"
-    # Reward penalty applied once per scripted recovery (revive/checkpoint), on a
-    # dedicated "recovery" channel, so wipes are discouraged but not catastrophic.
-    death_recovery_penalty: float = -1.0
+    # Negative reward charged once each time the main character dies, on a
+    # dedicated "death" channel. Trains toward a deathless-MC run: with
+    # death_mode="revive" the MC is revived and the episode continues, but every
+    # death costs this much, so the agent learns to keep the MC alive.
+    death_penalty: float = -10.0
 
     # Episode start. The character build is predefined infrastructure, not part
     # of the agent's problem: episodes reset by loading a pre-made Act-1-start

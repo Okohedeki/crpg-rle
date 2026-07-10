@@ -63,7 +63,7 @@ class TyrannyAdapter:
         self.config_driver = ConfigDriver(
             self.validate_build_spec(self.config.build_spec),
             death_mode=getattr(self.config, "death_mode", "terminal"),
-            recovery_penalty=getattr(self.config, "death_recovery_penalty", 0.0),
+            death_penalty=getattr(self.config, "death_penalty", 0.0),
             checkpoint_save=getattr(self.config, "working_save", None)
             or getattr(self.config, "save_start", None),
         )
@@ -102,9 +102,9 @@ class TyrannyAdapter:
         """RewardRouter contract: per-channel deltas for this step."""
         milestone_r, _fired = self.milestones.update(events, state)
         favor_r = self.favor.update(events, mode)
-        # Death-recovery penalty, if the intercept recovered a wipe this step.
-        recovery_r = self.config_driver.take_recovery_penalty()
-        return {"milestone": milestone_r, "faction_favor": favor_r, "recovery": recovery_r}
+        # MC-death penalty, if the main character died this step.
+        death_r = self.config_driver.take_death_penalty()
+        return {"milestone": milestone_r, "faction_favor": favor_r, "death": death_r}
 
     def terminal(self, state: dict) -> tuple[bool, str | None, float]:
         done, kind, penalty = self.milestones.terminal(state)
