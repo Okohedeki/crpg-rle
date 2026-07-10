@@ -45,7 +45,7 @@ class TyrannyConfig:
     reward_weights: dict[str, float] = field(
         default_factory=lambda: {
             "milestone": 1.0, "faction_favor": 1.0, "death": 1.0,
-            "explore": 1.0, "pause": 1.0,
+            "explore": 1.0, "pause": 1.0, "offscreen": 1.0,
         }
     )
 
@@ -54,13 +54,20 @@ class TyrannyConfig:
     explore_bonus: float = 0.1
     explore_cell_size: float = 3.0        # world units per novelty cell
 
-    # Pause shaping: a small cost for toggling pause (discourages the pause loop),
-    # and a bonus for issuing a command while paused in combat (tactical pause).
-    pause_penalty: float = 0.02
+    # Pause shaping. Space/Escape are not agent keys, but the HUD pause button is
+    # still clickable: charge a cost EVERY step the game sits paused, and give a
+    # one-shot bonus for a command issued while paused in combat (tactical pause).
+    pause_penalty: float = 0.02            # legacy knob (agent pause key removed)
+    paused_step_penalty: float = 0.05
     tactical_pause_bonus: float = 0.25
-    # Minimum real seconds between executed pause toggles (breaks the pause loop
-    # mechanically). The agent may still choose pause; extra presses are dropped.
-    pause_cooldown_seconds: float = 5.0
+    pause_cooldown_seconds: float = 5.0    # legacy knob (agent pause key removed)
+    # Scripted infrastructure backstop: if the game stays paused this many
+    # consecutive steps, the env unpauses it itself (0 disables).
+    auto_unpause_steps: int = 15
+
+    # Keep-the-MC-on-screen: per-step penalty while the player character is not
+    # inside the visible viewport (the agent interacts by clicking what it sees).
+    offscreen_penalty: float = 0.02
 
     edict_fail_days: float = 0.0
 

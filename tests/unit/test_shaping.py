@@ -1,6 +1,6 @@
-"""Reward shaping: exploration novelty, tactical-pause bonus (env-paused only),
-and the action-stats summary. Pause is no longer an agent action (Space is not in
-ACTION_KEYS), so there is no agent pause press to penalize/rate-limit."""
+"""Reward shaping: exploration novelty, paused-step + offscreen penalties,
+tactical-pause bonus, auto-unpause backstop, and the action-stats summary.
+Space AND Escape are not agent keys (pause/menus are env infrastructure)."""
 import numpy as np
 
 from crpg_rle.adapters.tyranny.adapter import ACTION_KEYS, TyrannyAdapter
@@ -16,8 +16,9 @@ def _state(x=0.0, z=0.0, area="AR", **kw):
     return s
 
 
-def test_space_not_in_action_vocabulary():
-    assert "Space" not in ACTION_KEYS   # pause is env infrastructure, not learned
+def test_pause_and_menu_keys_removed():
+    assert "Space" not in ACTION_KEYS
+    assert "Escape" not in ACTION_KEYS
 
 
 def test_exploration_rewards_new_cells_once():
@@ -30,24 +31,64 @@ def test_exploration_rewards_new_cells_once():
     assert a.reward(Mode.OVERWORLD, [], _state(0, 0))["explore"] == 0.1   # fresh episode
 
 
+def test_paused_step_penalty_charged_each_step():
+    a = TyrannyAdapter(TyrannyConfig(paused_step_penalty=0.05, tactical_pause_bonus=0.0))
+    a.reset(0)
+    paused = _state(paused=True)
+    assert a.reward(Mode.OVERWORLD, [], paused)["pause"] == -0.05
+    assert a.reward(Mode.OVERWORLD, [], paused)["pause"] == -0.05  # every step
+    assert a.reward(Mode.OVERWORLD, [], _state(paused=False))["pause"] == 0.0
+
+
 def test_tactical_pause_bonus_edge_triggered():
-    a = TyrannyAdapter(TyrannyConfig(tactical_pause_bonus=0.25, pause_penalty=0.0))
+    a = TyrannyAdapter(TyrannyConfig(tactical_pause_bonus=0.25, paused_step_penalty=0.0))
     a.reset(0)
     cast = np.array([0, 0, 0, ALPHA1])
     combat_paused = _state(paused=True, in_combat=True)
-    # first command while env-paused in combat → bonus once
     assert a.reward(Mode.COMBAT, [], combat_paused, cast)["pause"] == 0.25
-    # still paused → no repeat (can't be farmed)
-    assert a.reward(Mode.COMBAT, [], combat_paused, cast)["pause"] == 0.0
-    # combat resumes (unpaused) rearms it
-    a.reward(Mode.COMBAT, [], _state(paused=False, in_combat=True), cast)
+    assert a.reward(Mode.COMBAT, [], combat_paused, cast)["pause"] == 0.0  # no farming
+    a.reward(Mode.COMBAT, [], _state(paused=False, in_combat=True), cast)  # rearm
     assert a.reward(Mode.COMBAT, [], combat_paused, cast)["pause"] == 0.25
+
+
+def test_offscreen_penalty():
+    a = TyrannyAdapter(TyrannyConfig(offscreen_penalty=0.02))
+    a.reset(0)
+    assert a.reward(Mode.OVERWORLD, [], _state(player_on_screen=False))["offscreen"] == -0.02
+    assert a.reward(Mode.OVERWORLD, [], _state(player_on_screen=True))["offscreen"] == 0.0
+    # missing field (menus/loading/old mod) counts as on-screen
+    assert a.reward(Mode.OVERWORLD, [], _state())["offscreen"] == 0.0
+
+
+def test_auto_unpause_backstop():
+    from crpg_rle.adapters.tyranny.config_driver import ConfigDriver
+
+    class RecordBridge:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, op, **kw):
+            self.calls.append((op, kw))
+            return {"ok": True}
+
+        def observe(self):
+            return {"state": {"paused": False}, "events": []}
+
+    d = ConfigDriver({}, auto_unpause_steps=3)
+    b = RecordBridge()
+    paused = {"paused": True}
+    assert d.on_step(b, paused, []) is None      # 1
+    assert d.on_step(b, paused, []) is None      # 2
+    assert d.on_step(b, paused, []) is not None  # 3 -> unpause fires
+    assert any(op == "act" for op, _ in b.calls)
+    # an unpaused step resets the counter
+    d.on_step(b, {"paused": False}, [])
+    assert d._paused_steps == 0
 
 
 def test_action_stats_summary():
     from crpg_rle.train.buffer import action_stats
     actions = np.array([[0, 0, 2, 0], [1, 1, 2, 0], [0, 0, 0, 5]])
     st = action_stats(actions)
-    assert abs(st["btn_right"] - 2 / 3) < 1e-6   # two right-clicks (move orders)
-    assert 0.0 <= st["key_top_frac"] <= 1.0
+    assert abs(st["btn_right"] - 2 / 3) < 1e-6
     assert set(st) >= {"btn_none", "btn_right", "key_active", "cursor_x"}

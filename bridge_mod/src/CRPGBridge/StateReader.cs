@@ -39,6 +39,7 @@ namespace CRPGBridge
                 ["in_creation"] = InCreation(),
                 ["cheats"] = SDK.GameState.CheatsEnabled,
                 ["player_dead"] = PlayerDead(),
+                ["player_on_screen"] = PlayerOnScreen(),
             };
 
             s["conversation"] = ReadConversation();
@@ -129,6 +130,25 @@ namespace CRPGBridge
         {
             try { return UICharacterCreationManager.Instance != null; }
             catch { return false; }
+        }
+
+        /// <summary>Whether the player character is inside the visible viewport.
+        /// The agent interacts by clicking what it sees, so the env penalizes
+        /// steps where the MC has been scrolled off-screen. Defaults to true
+        /// when there is no player/camera (menus, loading, creation).</summary>
+        private static bool PlayerOnScreen()
+        {
+            try
+            {
+                var pc = SDK.GameState.s_playerCharacter;
+                if (pc == null) return true;
+                Camera cam = Camera.main;
+                if (cam == null) return true;
+                Vector3 sp = cam.WorldToScreenPoint(pc.transform.position);
+                return sp.z > 0f && sp.x >= 0f && sp.x <= Screen.width
+                    && sp.y >= 0f && sp.y <= Screen.height;
+            }
+            catch { return true; }
         }
 
         /// <summary>Whether the main character (player) is dead — the signal for

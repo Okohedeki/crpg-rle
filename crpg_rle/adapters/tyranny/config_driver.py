@@ -26,20 +26,24 @@ class ConfigDriver:
     """Owns the frozen run config and applies it via scripted triggers."""
 
     def __init__(self, spec: dict | None, *, death_mode: str = "terminal",
-                 death_penalty: float = 0.0, checkpoint_save: str | None = None) -> None:
+                 death_penalty: float = 0.0, checkpoint_save: str | None = None,
+                 auto_unpause_steps: int = 0) -> None:
         self.spec = spec or {}
         self.death_mode = death_mode
         self.death_penalty = death_penalty
         self.checkpoint_save = checkpoint_save
+        self.auto_unpause_steps = auto_unpause_steps
         self._levels_done: set[tuple[int, int]] = set()
         self._pending_penalty = 0.0
         self._was_dead = False
+        self._paused_steps = 0
 
     def reset(self) -> None:
         """Per-episode reset of trigger bookkeeping (config itself is frozen)."""
         self._levels_done = set()
         self._pending_penalty = 0.0
         self._was_dead = False
+        self._paused_steps = 0
 
     def take_death_penalty(self) -> float:
         """Consume any pending MC-death penalty (added to the reward this step).
@@ -55,7 +59,29 @@ class ConfigDriver:
             return bridge.observe()
         if self._handle_levelup(bridge, state):
             return bridge.observe()
+        if self._handle_stuck_pause(bridge, state):
+            return bridge.observe()
         return None
+
+    # -------------------------------------------------- pause backstop (infra)
+    def _handle_stuck_pause(self, bridge, state: dict) -> bool:
+        """Unpausing is env infrastructure: if the game has sat paused for
+        auto_unpause_steps consecutive steps (the agent clicked the HUD pause
+        button and stalled), press Space ourselves and resume play."""
+        if not state.get("paused") or state.get("in_creation"):
+            self._paused_steps = 0
+            return False
+        self._paused_steps += 1
+        if self.auto_unpause_steps <= 0 or self._paused_steps < self.auto_unpause_steps:
+            return False
+        try:
+            bridge.request("act", inputs=[{"t": "key", "key": "Space", "action": "press"}],
+                           frames=2)
+            self._paused_steps = 0
+            return True
+        except Exception as exc:
+            logger.warning("auto-unpause failed: %s", exc)
+            return False
 
     # ------------------------------------------------------------- level-up (W4)
     def levelup_plan_for(self, level: int) -> dict | None:

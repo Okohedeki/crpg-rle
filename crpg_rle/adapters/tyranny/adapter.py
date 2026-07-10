@@ -23,11 +23,11 @@ from crpg_rle.adapters.tyranny.state_schema import pack_state, state_vector_size
 
 # Keys the agent can emit (action-space key slot). Index 0 = no key.
 # Number keys drive dialogue option selection AND party-member selection (the game
-# interprets them by mode); Tab highlights. Pause (Space) is deliberately NOT
-# here: pausing/unpausing is env infrastructure, not an agent decision, so the
-# agent can never freeze the game in a pause loop.
+# interprets them by mode); Tab highlights. Pause (Space) and Escape are
+# deliberately NOT here: pausing and menus are env infrastructure, not agent
+# decisions — the agent must not freeze the game or wander system menus.
 ACTION_KEYS: list[str] = [
-    "", "Escape", "Tab",
+    "", "Tab",
     "Alpha1", "Alpha2", "Alpha3", "Alpha4", "Alpha5",
     "Alpha6", "Alpha7", "Alpha8", "Alpha9",
 ]
@@ -73,6 +73,7 @@ class TyrannyAdapter:
             death_penalty=getattr(self.config, "death_penalty", 0.0),
             checkpoint_save=getattr(self.config, "working_save", None)
             or getattr(self.config, "save_start", None),
+            auto_unpause_steps=getattr(self.config, "auto_unpause_steps", 0),
         )
 
     # --- spaces --------------------------------------------------------------
@@ -112,11 +113,12 @@ class TyrannyAdapter:
         favor_r = self.favor.update(events, mode)
         # MC-death penalty, if the main character died this step.
         death_r = self.config_driver.take_death_penalty()
-        # Shaping: exploration (movement toward new ground) and pause behavior.
+        # Shaping: exploration, pause behavior, keep-the-MC-on-screen.
         explore_r = self._exploration_reward(state)
         pause_r = self._pause_reward(state, action)
+        offscreen_r = self._offscreen_reward(state)
         return {"milestone": milestone_r, "faction_favor": favor_r, "death": death_r,
-                "explore": explore_r, "pause": pause_r}
+                "explore": explore_r, "pause": pause_r, "offscreen": offscreen_r}
 
     def _player_pos(self, state: dict):
         party = state.get("party") or []
@@ -139,25 +141,33 @@ class TyrannyAdapter:
         return float(self.config.explore_bonus)
 
     def _pause_reward(self, state: dict, action) -> float:
-        """Discourage the pause loop (small cost per pause press) and reward a
-        command issued while paused in combat — ONCE per paused stretch, so it
-        can't be farmed by holding pause and spamming commands every step."""
-        if action is None:
-            return 0.0
-        key = ACTION_KEYS[int(action[3])] if int(action[3]) < len(ACTION_KEYS) else ""
-        button = int(action[2])
+        """Pause is not an agent key, but the agent can still pause by clicking
+        the HUD pause button. Charge a cost EVERY step the game sits paused so
+        long pauses bleed reward; keep the one-shot tactical bonus for a command
+        issued while paused in combat (rearmed only when play resumes)."""
         paused = bool(state.get("paused"))
         r = 0.0
-        if key == "Space":
-            r -= float(self.config.pause_penalty)
-        if not paused:
-            self._tactical_rewarded = False   # rearm once combat resumes
-        is_command = button != 0 or key in ("Alpha1", "Alpha2", "Alpha3", "Alpha4",
-                                             "Alpha5", "Alpha6", "Alpha7", "Alpha8", "Alpha9")
+        if paused:
+            r -= float(self.config.paused_step_penalty)
+        else:
+            self._tactical_rewarded = False   # rearm once play resumes
+        if action is None:
+            return r
+        key = ACTION_KEYS[int(action[3])] if int(action[3]) < len(ACTION_KEYS) else ""
+        button = int(action[2])
+        is_command = button != 0 or key.startswith("Alpha")
         if paused and state.get("in_combat") and is_command and not self._tactical_rewarded:
             r += float(self.config.tactical_pause_bonus)
             self._tactical_rewarded = True
         return r
+
+    def _offscreen_reward(self, state: dict) -> float:
+        """Penalize every step the player character is not on the visible screen
+        — the agent interacts by clicking, so it must keep the MC in view.
+        Missing field (menus/loading/old mod) counts as on-screen."""
+        if state.get("player_on_screen") is False:
+            return -float(self.config.offscreen_penalty)
+        return 0.0
 
     def gate_inputs(self, action, inputs: list[dict]) -> list[dict]:
         """Rate-limit pause: drop a Space key press that lands within the pause
