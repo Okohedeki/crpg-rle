@@ -34,6 +34,9 @@ namespace CRPGBridge
             DialogueInterceptor.Log = s => Logger.LogInfo("[dialogue] " + s);
             DialogueInterceptor.Apply(_harmony);
 
+            Hooks.TelemetrySafety.Log = s => Logger.LogInfo("[telemetry] " + s);
+            Hooks.TelemetrySafety.Install(_harmony);
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
@@ -56,6 +59,7 @@ namespace CRPGBridge
             _ipc.Register("to_menu", HandleToMenu);
             _ipc.Register("dialogue", HandleDialogue);
             _ipc.Register("creation", HandleCreation);
+            _ipc.Register("diag_creation_ui", HandleDiagCreationUi);
             _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Register("diag_dialogue", HandleDiagDialogue);
             _ipc.Start();
@@ -114,6 +118,7 @@ namespace CRPGBridge
                 case "advance": mgr.PressOkay(); break;
                 case "regress": mgr.PressBack(); break;
                 case "begin_conquest": mgr.BeginConquest(); break;
+                case "quick_start": QuickStartTemplate(mgr, req["name"] != null ? req["name"].Value<string>() : "Agent"); break;
                 case "set_name": SetCreationName(mgr, req["name"] != null ? req["name"].Value<string>() : "Agent"); break;
                 case "complete":
                     if (mgr.IsCharacterCreationReadyForCompletion())
@@ -150,6 +155,88 @@ namespace CRPGBridge
                 if (nameField != null) nameField.SetValue(character, name);
             }
             catch { }
+        }
+
+        // Deterministic fresh character: pick a pre-made background template
+        // (skips Conquest) so IsCharacterCreationReadyForCompletion can pass
+        // without a trained agent. Used by start_mode="creation_quickstart".
+        private static void QuickStartTemplate(UICharacterCreationManager mgr, string name)
+        {
+            try
+            {
+                object character = mgr.PaperdollCharacterInfo;
+                // BackgroundMode = Template
+                var bgField = character.GetType().GetField("BackgroundMode",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                var options = mgr.HistoryOptions;
+                var templatesField = options != null ? options.GetType().GetField("Templates",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance) : null;
+                var templates = templatesField != null ? templatesField.GetValue(options) as Array : null;
+                if (templates != null && templates.Length > 0 && bgField != null)
+                {
+                    // BackgroundMode enum value "Template" == 1 (Conquest == 0).
+                    bgField.SetValue(character, Enum.ToObject(bgField.FieldType, 1));
+                    var htProp = character.GetType().GetProperty("HistoryTemplate",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    if (htProp != null) htProp.SetValue(character, templates.GetValue(0), null);
+                }
+                SetCreationName(mgr, name);
+            }
+            catch (Exception ex) { }
+        }
+
+        /// <summary>diag_creation_ui: skills state + on-screen positions of skill
+        /// increment widgets, so a test can click one and confirm it registers.</summary>
+        private JObject HandleDiagCreationUi(JObject req)
+        {
+            var result = new JObject { ["in_creation"] = false };
+            var mgr = UICharacterCreationManager.Instance;
+            if (mgr == null) return result;
+            result["in_creation"] = true;
+            result["stage"] = mgr.CurrentStage;
+
+            object character = mgr.PaperdollCharacterInfo;
+            try
+            {
+                var sptProp = character.GetType().GetProperty("SkillPointsToSpend");
+                if (sptProp != null) result["skill_points_to_spend"] = (int)sptProp.GetValue(character, null);
+                var deltasField = character.GetType().GetField("SkillValueDeltas");
+                if (deltasField != null)
+                {
+                    var deltas = deltasField.GetValue(character) as int[];
+                    if (deltas != null)
+                    {
+                        var arr = new JArray();
+                        foreach (int d in deltas) arr.Add(d);
+                        result["skill_deltas"] = arr;
+                    }
+                }
+            }
+            catch { }
+
+            // Find on-screen skill increment widgets.
+            var widgets = new JArray();
+            Camera cam = Camera.main;
+            var setters = UnityEngine.Object.FindObjectsOfType<UICharacterCreationSkillSetter>();
+            foreach (var setter in setters)
+            {
+                if (!setter.gameObject.activeInHierarchy) continue;
+                int adj = 0;
+                try { var f = setter.GetType().GetField("Adjustment"); if (f != null) adj = (int)f.GetValue(setter); } catch { }
+                Vector3 wp = setter.transform.position;
+                Camera c = cam != null ? cam : Camera.current;
+                Vector3 sp = c != null ? c.WorldToScreenPoint(wp) : new Vector3(-1, -1, 0);
+                widgets.Add(new JObject
+                {
+                    ["adjustment"] = adj,
+                    ["skill"] = setter.Skill.ToString(),
+                    ["x"] = sp.x / Screen.width,
+                    ["y"] = sp.y / Screen.height,
+                    ["on_screen"] = sp.z > 0 && sp.x >= 0 && sp.x <= Screen.width && sp.y >= 0 && sp.y <= Screen.height
+                });
+            }
+            result["skill_widgets"] = widgets;
+            return result;
         }
 
         /// <summary>dialogue: {active, seed, corpus_path?} — arm the per-episode
