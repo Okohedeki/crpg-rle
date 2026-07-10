@@ -63,6 +63,8 @@ namespace CRPGBridge
             _ipc.Register("dialogue", HandleDialogue);
             _ipc.Register("creation", HandleCreation);
             _ipc.Register("diag_creation_ui", HandleDiagCreationUi);
+            _ipc.Register("creation_options", req => CreationChoices.ListOptions());
+            _ipc.Register("creation_choose", req => CreationChoices.Choose(req["index"].Value<int>()));
             _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Register("diag_dialogue", HandleDiagDialogue);
             _ipc.Start();
