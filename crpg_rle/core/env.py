@@ -63,22 +63,42 @@ class CRPGEnv(gym.Env):
         self._build_info: dict = {"locked": False, "verified": False}
 
     # ------------------------------------------------------------------ setup
-    def _ensure_process(self) -> None:
+    def _ensure_process(self, attempts: int = 3) -> None:
         if self._bridge is not None:
             return
-        if self._launch:
-            self._proc = GameProcess(
-                self.config.exe_path,
-                instance_id=self.config.instance_id,
-                port=self.config.port,
-                window=(self.config.obs_width, self.config.obs_height),
-            )
-            self._proc.launch()
-            self._hwnd = self._proc.find_window()
-        self._bridge = TcpBridgeClient(port=self.config.port)
-        self._bridge.connect()
-        self._bridge.handshake()
-        self._bridge.request("speed", time_scale=self.config.time_scale, uncap_fps=self.config.time_scale > 1.0)
+        last_err: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                if self._launch:
+                    self._proc = GameProcess(
+                        self.config.exe_path,
+                        instance_id=self.config.instance_id,
+                        port=self.config.port,
+                        window=(self.config.obs_width, self.config.obs_height),
+                    )
+                    self._proc.launch()
+                    self._hwnd = self._proc.find_window()
+                self._bridge = TcpBridgeClient(port=self.config.port)
+                self._bridge.connect()
+                self._bridge.handshake()
+                self._bridge.request("speed", time_scale=self.config.time_scale,
+                                     uncap_fps=self.config.time_scale > 1.0)
+                return
+            except (BridgeDied, OSError) as exc:
+                last_err = exc
+                logger.warning("boot attempt %d/%d failed (%s); relaunching",
+                               attempt + 1, attempts, exc)
+                if self._bridge is not None:
+                    self._bridge.close()
+                    self._bridge = None
+                if self._proc is not None:
+                    self._proc.kill()
+                    self._proc = None
+                self._hwnd = None
+                self._boot_ready = False
+                self._dialogue_preloaded = False
+                time.sleep(3.0)
+        raise BridgeDied(f"game failed to boot after {attempts} attempts: {last_err}")
 
     def _relaunch(self) -> None:
         """Recover from a dead bridge (game crash / plugin swept on reload) by
