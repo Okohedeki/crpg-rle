@@ -39,6 +39,8 @@ def main() -> None:
     ap.add_argument("--algo", choices=["ppo", "grpo"], default="ppo")
     ap.add_argument("--env", choices=["proxy", "live"], default="proxy")
     ap.add_argument("--steps", type=int, default=100_000)
+    ap.add_argument("--rollout-steps", type=int, default=512,
+                    help="PPO steps per update (use small, e.g. 64, for slow live runs)")
     ap.add_argument("--obs-size", type=int, default=84)
     ap.add_argument("--episode-len", type=int, default=64)
     ap.add_argument("--sparse", action="store_true", help="proxy: reward only on the last step")
@@ -55,7 +57,8 @@ def main() -> None:
     logger = Logger(args.csv)
     try:
         if args.algo == "ppo":
-            cfg = PPOConfig(total_steps=args.steps, seed=args.seed)
+            cfg = PPOConfig(total_steps=args.steps, seed=args.seed,
+                            rollout_steps=args.rollout_steps)
             PPOTrainer(env, cfg, device=args.device, logger=logger).train()
         else:
             cfg = GRPOConfig(total_steps=args.steps, seed=args.seed,
