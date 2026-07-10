@@ -65,6 +65,8 @@ namespace CRPGBridge
             _ipc.Register("diag_creation_ui", HandleDiagCreationUi);
             _ipc.Register("creation_options", req => CreationChoices.ListOptions());
             _ipc.Register("creation_choose", req => CreationChoices.Choose(req["index"].Value<int>()));
+            _ipc.Register("set_global", HandleSetGlobal);
+            _ipc.Register("stats", HandleStats);
             _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Register("diag_dialogue", HandleDiagDialogue);
             _ipc.Start();
@@ -409,6 +411,51 @@ namespace CRPGBridge
             {
                 ["seq"] = new JArray(rng.NextU64().ToString(), rng.NextU64().ToString(), rng.NextU64().ToString()),
                 ["hash"] = SplitMix64.Hash64(text).ToString()
+            };
+        }
+
+        /// <summary>set_global: {name, value} — write a global variable (Conquest
+        /// outcomes etc. are globals; part of programmatic build application).</summary>
+        private JObject HandleSetGlobal(JObject req)
+        {
+            var gv = GlobalVariables.Instance;
+            if (gv == null) return new JObject { ["ok"] = false, ["error"] = "GlobalVariables not alive" };
+            string name = req["name"].Value<string>();
+            int value = req["value"].Value<int>();
+            gv.SetVariable(name, value);
+            return new JObject { ["name"] = name, ["value"] = gv.GetVariable(name) };
+        }
+
+        /// <summary>stats: read the player's attributes, level, and all skills —
+        /// verification surface for programmatic build application.</summary>
+        private JObject HandleStats(JObject req)
+        {
+            var player = SDK.GameState.s_playerCharacter;
+            if (player == null) return new JObject { ["ok"] = false, ["error"] = "no player" };
+            var cs = player.gameObject.GetComponent<Game.CharacterStats>();
+            if (cs == null) return new JObject { ["ok"] = false, ["error"] = "no CharacterStats" };
+
+            var attrs = new JObject();
+            foreach (object v in Enum.GetValues(typeof(Game.CharacterStats.AttributeScoreType)))
+            {
+                try { attrs[v.ToString()] = cs.GetBaseAttributeScore((Game.CharacterStats.AttributeScoreType)v); }
+                catch { }
+            }
+            var skills = new JObject();
+            foreach (object v in Enum.GetValues(typeof(Game.CharacterStats.SkillType)))
+            {
+                try
+                {
+                    int val = cs.CalculateSkill((Game.CharacterStats.SkillType)v);
+                    if (val != 0) skills[v.ToString()] = val;
+                }
+                catch { }
+            }
+            return new JObject
+            {
+                ["level"] = cs.Level,
+                ["attributes"] = attrs,
+                ["skills_nonzero"] = skills
             };
         }
 

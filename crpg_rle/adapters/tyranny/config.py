@@ -64,6 +64,12 @@ class TyrannyConfig:
     corpus_path: str | None = None
     dialogue_randomizer: bool = True
 
+    # Programmatic character build applied on top of the loaded base save at
+    # reset (attributes/skills/abilities/reputation/globals). See
+    # TyrannyAdapter.apply_build. Overridable per episode via
+    # reset(options={"build_spec": ...}) for sampled/agent-chosen builds.
+    build_spec: dict | None = None
+
     @property
     def port(self) -> int:
         return self.port_base + self.instance_id

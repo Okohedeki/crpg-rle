@@ -119,6 +119,14 @@ class CRPGEnv(gym.Env):
                     pass
                 time.sleep(1.0)
             state = self._wait_loaded(want_party=True)
+            # Programmatic build on top of the base save (game-specific; the
+            # adapter translates the spec into engine calls). Per-episode spec
+            # via reset options wins over the config default.
+            spec = (options or {}).get("build_spec", getattr(self.config, "build_spec", None))
+            apply_build = getattr(self.adapter, "apply_build", None)
+            if apply_build is not None and spec:
+                apply_build(self._bridge, spec)
+                state = self._bridge.observe()["state"]
         else:
             # creation start: env scripts nav to New Game; agent drives creation.
             self._wait_menu()

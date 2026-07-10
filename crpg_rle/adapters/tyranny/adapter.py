@@ -84,6 +84,33 @@ class TyrannyAdapter:
         self.favor.reset(self._target_faction)
         return {"target_faction": self._target_faction, "dialogue_seed": dialogue_seed}
 
+    def apply_build(self, bridge, spec: dict | None) -> None:
+        """Apply a programmatic character build on top of the loaded base save.
+
+        spec = {"attributes": {"Might": 16, ...},        # set exactly
+                "skills": {"Dodge": 25, ...},            # base points added
+                "abilities": ["Sunder_Armor", ...],
+                "reputation": [{"faction": "ScarletChorus", "axis": "positive",
+                                 "strength": 4}, ...],
+                "globals": {"NAME": 1, ...}}
+        Uses the game's own console commands (validated engine paths), verified
+        live: attributes exact, skills/reputation applied, deriveds recompute.
+        """
+        if not spec:
+            return
+        for attr, value in (spec.get("attributes") or {}).items():
+            bridge.request("console", cmd=f"AttributeScore player {attr} {int(value)}")
+        for skill, value in (spec.get("skills") or {}).items():
+            bridge.request("console", cmd=f"Skill player {skill} {int(value)}")
+        for ability in spec.get("abilities") or []:
+            bridge.request("console", cmd=f"AddAbility player {ability}")
+        for rep in spec.get("reputation") or []:
+            bridge.request("console", cmd=(
+                f"reputationaddpoints {rep['faction']} {rep.get('axis', 'positive')} "
+                f"{int(rep.get('strength', 1))} 585"))
+        for name, value in (spec.get("globals") or {}).items():
+            bridge.request("set_global", name=name, value=int(value))
+
     @property
     def target_faction(self) -> str | None:
         return self._target_faction
