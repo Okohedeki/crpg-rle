@@ -55,6 +55,7 @@ class CRPGEnv(gym.Env):
         self._steps = 0
         self._mode_counts: dict[int, int] = {}
         self._boot_ready = False
+        self._dialogue_preloaded = False
         self._run_initialized = False
         self._run_save: str | None = None
         self._run_build_spec: dict | None = None
@@ -101,6 +102,7 @@ class CRPGEnv(gym.Env):
         if not self._boot_ready:
             self._wait_menu()
             self._boot_ready = True
+            self._preload_dialogue()
         accepted = False
         for _ in range(30):
             try:
@@ -115,6 +117,13 @@ class CRPGEnv(gym.Env):
         state = self._wait_loaded(want_party=True)
         if state.get("loading") or not state.get("party"):
             raise RuntimeError(f"save {filename!r} did not finish loading")
+        # Settle: the loading flag can clear before the scene finishes initializing
+        # (AI/physics), and driving the old engine in that window has crashed it.
+        # Wait a fixed real-time beat, then confirm state is still coherent.
+        settle = getattr(self.config, "load_settle_seconds", 2.5)
+        if settle > 0:
+            time.sleep(settle)
+            state = self._wait_loaded(want_party=True)
         return state
 
     def _initialize_run_build(self, base_save: str, spec: dict) -> dict:
@@ -165,18 +174,28 @@ class CRPGEnv(gym.Env):
         }
         return state
 
-    def _arm_dialogue(self, episode_cfg: dict) -> None:
-        """Arm after loading; corpus I/O during boot can stall the old engine."""
+    def _preload_dialogue(self) -> None:
+        """Load the paraphrase corpus once, while the engine is quiescent at the
+        main menu. Main-thread file IO in the window right after a save load has
+        crashed the old engine, so we do it here (before any load) and only flip
+        the seed/active flag per episode in _arm_dialogue."""
+        if self._dialogue_preloaded:
+            return
+        self._dialogue_preloaded = True
         assert self._bridge is not None
         dr = getattr(self.config, "dialogue_randomizer", False)
         corpus_path = getattr(self.config, "corpus_path", None)
         if dr and corpus_path:
-            self._bridge.request(
-                "dialogue",
-                active=True,
-                seed=episode_cfg["dialogue_seed"],
-                corpus_path=corpus_path,
-            )
+            self._bridge.request("dialogue", active=False, seed=0, corpus_path=corpus_path)
+
+    def _arm_dialogue(self, episode_cfg: dict) -> None:
+        """Per-episode: set the seed and enable the randomizer. The corpus is
+        already loaded by _preload_dialogue, so no file IO happens here."""
+        assert self._bridge is not None
+        dr = getattr(self.config, "dialogue_randomizer", False)
+        corpus_path = getattr(self.config, "corpus_path", None)
+        if dr and corpus_path:
+            self._bridge.request("dialogue", active=True, seed=episode_cfg["dialogue_seed"])
 
     # --------------------------------------------------------------- gym API
     def reset(self, *, seed: int | None = None, options: dict | None = None):
@@ -212,6 +231,7 @@ class CRPGEnv(gym.Env):
                 raise RuntimeError("creation-mode run cannot be reset after initialization")
             self._wait_menu()
             self._boot_ready = True
+            self._preload_dialogue()
             self._bridge.request("new_game")
             state = self._wait_loaded(want_party=False)
             self._run_initialized = True

@@ -167,7 +167,10 @@ class TyrannyAdapter:
         rng = SplitMix64(seed)
         targets = self.target_factions()
         self._target_faction = targets[rng.randint(len(targets))]
-        dialogue_seed = rng.next_u64()
+        # Mask to 63 bits: the seed crosses JSON to the C# bridge as a number, and
+        # a value above 2**63 overflows the signed-long path there and crashes the
+        # engine. 63 bits is ample entropy for the per-episode randomizer.
+        dialogue_seed = rng.next_u64() & ((1 << 63) - 1)
 
         self.milestones.reset()
         self.favor.reset(self._target_faction)

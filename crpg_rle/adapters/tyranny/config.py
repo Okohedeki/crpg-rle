@@ -70,6 +70,11 @@ class TyrannyConfig:
     max_party: int = 6
     max_steps: int = 20000
 
+    # Real-time seconds to wait after a save's loading flag clears before driving
+    # the game. The old engine can crash if stepped before the scene finishes
+    # initializing (AI/physics) even though `loading` already went false.
+    load_settle_seconds: float = 2.5
+
     # Dialogue randomizer (§9). When corpus_path is set and dialogue_randomizer
     # is True, the mod swaps option text + shuffles order per episode.
     corpus_path: str | None = None
