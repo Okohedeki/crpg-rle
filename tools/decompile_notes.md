@@ -1,535 +1,481 @@
 # Tyranny Decompile Notes — Harmony Hook Reference
 
-Source: ILSpy decompile of `Assembly-CSharp.dll` at `H:\RL\tools\extracted\assembly_csharp\` (1147 .cs).
+Sources:
+- `H:\RL\tools\extracted\assembly_csharp\` — ILSpy decompile of `Assembly-CSharp.dll` (1147 .cs): `Game.*` subclasses + global-namespace `UI*` classes.
+- `H:\RL\tools\extracted\assembly_csharp_firstpass\` — ILSpy decompile of `Assembly-CSharp-firstpass.dll` (895 .cs): the engine/SDK layer. **All previously-inferred signatures below are now verified against this source** and marked **[verified]** with file refs.
+
 Game: Tyranny (Obsidian 2016), Unity 5.4 Mono, OEI/PoE1 shared engine. NGUI UI.
 
-## CRITICAL ARCHITECTURE NOTE — read first
+## ARCHITECTURE + NAMESPACE MAP (verified — important correction)
 
-The decompiled assembly contains only two layers:
-- **`Game.*` namespace** (files in `Game/` subdir): the game-specific subclasses, e.g. `Game.GameState : SDK.GameState`, `Game.Reputation : SDK.Reputation`, `Game.WorldTime : SDK.WorldTime`, `Game.GameResources : SDK.GameResources`, `Game.CommandLine : SDK.CommandLine`, etc.
-- **Global-namespace UI classes** (files in root): `UIConversationManager`, `UIMainMenuManager`, `UICommandLine`, `UICharacterCreationManager`, etc.
-
-**The entire `SDK.*` base layer is in a SEPARATE assembly that was NOT decompiled here** (likely `Assembly-CSharp-firstpass.dll` / an OEI SDK dll). `grep "namespace SDK"` returns 0 hits. This means:
-- Many core engine types have **no source here at all**: `SDK.GameInput`, `SDK.Console`, `SDK.GlobalVariables`, `SDK.TimeController`, `SDK.PersistenceManager`, `SDK.SaveGameInfo`, `OEIFormats.FlowCharts.Conversations.Conversation`, `ConversationManager`, `FlowChartPlayer`, `PlayerResponseNode`, `SDK.CharacterStats`, `SDK.Health`, `SDK.PartyMemberAI`, `SDK.Faction`, `SDK.QuestManager` base.
-- All signatures below marked **[SDK, inferred]** were reconstructed from *usage* in the decompiled Game-layer code. Member names/params are reliable (they compile against the real DLL), but you should confirm exact overload/visibility against the shipped `Assembly-CSharp-firstpass.dll` with dnSpy/ILSpy before finalizing a patch. Types marked **[HERE]** are fully decompiled in this assembly.
-- For Harmony: you can `AccessTools.TypeByName("SDK.GameState")` etc. at runtime regardless of which DLL — the CLR resolves across assemblies. Patch targets in the SDK layer are fully reachable; you just can't read their bodies here.
-
-Namespaces are file-scoped (`namespace Game;`). `using SDK;` means unqualified `GameInput`, `Console`, `GlobalVariables`, `TimeController` in Game-layer code all resolve to `SDK.*`.
+Three layers:
+1. `Assembly-CSharp.dll` → `Game.*` namespace subclasses (`Game.GameState : SDK.GameState`, etc.) + global-namespace UI classes.
+2. `Assembly-CSharp-firstpass.dll` → the engine layer. **Namespace split inside firstpass:**
+   - **`namespace SDK`** (files in `SDK/`): `SDK.GameState`, `SDK.GameResources`, `SDK.CommandLine`, `SDK.Reputation`, `SDK.ReputationManager`, `SDK.QuestManager`, `SDK.PartyMemberAI`, `SDK.Health`, `SDK.CharacterStats`, `SDK.GameCursor`, `SDK.WorldTime`.
+   - **GLOBAL namespace** (files at firstpass root — my earlier notes wrongly called these `SDK.*`): `GameInput`, `GlobalVariables`, `TimeController`, `Console`, `Conversation`, `ConversationManager`, `FlowChart`, `FlowChartPlayer`, `SaveGameInfo`, `PersistenceManager`, etc. For `AccessTools.TypeByName` use the bare name, e.g. `"GameInput"`, `"TimeController"`, `"ConversationManager"` — NOT `"SDK.GameInput"`.
+3. `OEIFormats.dll` (STILL not decompiled): `OEIFormats.FlowCharts.*` node data classes — `FlowChartNode`, `PlayerResponseNode`, `DialogueNode`, `ScriptNode`, `BankNode`, `FlowChartLink`, quest `ObjectiveNode`. Member names below for these are from call-sites only (still reliable; decompile OEIFormats.dll if exact overloads needed).
 
 ---
 
-## 1. GameState  — `Game/GameState.cs` [HERE], base `SDK.GameState` [SDK]
+## 1. GameState — `Game/GameState.cs` [HERE] : `SDK.GameState` (`firstpass/SDK/GameState.cs`) [verified]
 
-`public class Game.GameState : SDK.GameState` (a MonoBehaviour singleton).
+`public abstract class SDK.GameState : MonoBehaviour`; `public class Game.GameState : SDK.GameState`.
 
-**Singleton / player access:**
+**Singleton / player [verified]:**
 ```csharp
-public new static GameState Instance => SDK.GameState.s_instance as GameState;   // [HERE]
-public new static Player s_playerCharacter { get; set; }   // [HERE] override wrapper; base SDK field SDK.GameState.s_playerCharacter (a CharacterStats-ish); here returns Game.Player
-protected static SDK.GameState.s_instance                  // [SDK] backing field, MonoBehaviour
-public static event EventHandler PlayerCharacterChanged;    // [HERE]
-```
-`GameState.Instance` is the go-to accessor. `GameState.s_playerCharacter` is `Game.Player` (has `.gameObject`, `.Character` (CharacterStats), `.GetComponent<...>()`).
-
-**Combat flag** (all [SDK] statics, set inside `Game.GameState.UpdateIsInCombatAndGameOver()` [HERE]):
-```csharp
-SDK.GameState.InCombat        // static bool property (public getter)  -> READ combat state
-SDK.GameState.s_isInCombat    // static bool backing field
-public static bool CannotSaveBecauseInCombat => SDK.GameState.s_isInCombat || s_noSaveInCombatCountdown > 0;  // [HERE]
-public static bool IsInTrapTriggeredCombat { get; }  // [HERE]
-public static float InCombatDuration => s_inCombatTimer;  // [HERE]
-public static bool ForceCombatMode { get; set; }  // [HERE] force combat on
-```
-Combat start/end raise `SDK.GameState.OnCombatStart` / `OnCombatEnd` (EventHandler events) — good postfix/subscribe points. `UpdateIsInCombatAndGameOver()` runs every `Update()`.
-
-**Paused state:** owned by `TimeController` (see §7), NOT GameState. `SDK.GameState.Paused` [SDK] static bool exists (used in `UpdateIsInCombatAndGameOver`: `if (SDK.GameState.Paused ...) return;`) and mirrors TimeController pause.
-
-**Current map / area:**
-```csharp
-public MapData GetCurrentMap();  public void SetCurrentMap(MapData);   // [HERE] instance
-public MapData GetLastMap();  public MapData GetCurrentNextMap();
-public Region CurrentRegion { get; }                 // [HERE] current world Region
-public override string GetCurrentMapName();          // [HERE] returns MapData.GetDisplayNameText()
-public bool CurrentMapIsStronghold { get; }
-SDK.GameState.LoadedLevelName   // [SDK] static string — the scene name currently loaded
-SDK.GameState.ApplicationLoadedLevelName  // [SDK] static string
+public static SDK.GameState Instance => s_instance;                 // SDK/GameState.cs L134 (protected static s_instance)
+public new static Game.GameState Instance => SDK.GameState.s_instance as Game.GameState;   // Game layer
+public static Player SDK.GameState.s_playerCharacter;               // L24 — public static field, type Player
+public static Faction SDK.GameState.s_playerCharacterFaction;       // L26
+public static ControlMapping SDK.GameState.Controls;                // L32 — key bindings
+public static event EventHandler PlayerCharacterChanged;            // Game layer
 ```
 
-**Game-over / death:**
+**Combat [verified, SDK/GameState.cs]:**
 ```csharp
-SDK.GameState.GameOver / SDK.GameState.s_gameOver   // [SDK] static bool (s_gameOver set true when PartyDead)
-SDK.GameState.PartyDead                              // [SDK] static bool
-public static bool CutsceneAllowed => !SDK.GameState.PartyDead && !SDK.GameState.GameOver;  // [HERE]
-```
-On game over, `UIDeathManager.Instance.ShowWindow()` is called ~2s after PartyDead.
-
-**Loading state:**
-```csharp
-SDK.GameState.IsLoading         // [SDK] static bool — true during level transition, set false in FinalizeLevelLoad()
-SDK.GameState.IsTransitionInProgress  // [SDK] static bool
-SDK.GameState.IsRestoredLevel   // [SDK] static bool
-SDK.GameState.LoadedGame / NewGame / FirstPlaythrough  // [SDK] static bool flags
-SDK.GameState.NumSceneLoads     // [SDK] static int
-public void FinalizeLevelLoad();  // [HERE] fires OnLevelLoaded* events, sets IsLoading=false — HOOK for "load complete"
+public static bool InCombat => s_isInCombat;         // L136 (s_isInCombat: protected static bool)
+public static event EventHandler CombatStart;        // L162  <-- subscribe (NOT "OnCombatStart" — that's the internal raiser)
+public static event EventHandler CombatEnd;          // L164
+// Game layer: CannotSaveBecauseInCombat, IsInTrapTriggeredCombat, InCombatDuration, ForceCombatMode { get; set; }
+// combat detection loop: Game.GameState.UpdateIsInCombatAndGameOver() runs every Update()
 ```
 
-**Scene transition helpers [HERE, static]:** `LoadMainMenu(bool fadeOut)`, `ChangeLevel(MapData/MapType/string)`, `LoadLevel(MapData/string)`, `BeginLevelUnload(string)`, `Autosave()`, `EndGameAndLoadCredits()`, `ReturnToMainMenuFromError()`.
+**Paused [verified]:** `public static bool Paused { get; }` (L150) — **delegates to `TimeController.Instance.Paused`** (which is `Time.timeScale == 0f`). Read-only here; write via TimeController (§7).
 
-**Difficulty / mode:** `public static GameMode Mode;` and `public static GameMode Option => Mode;` [HERE]. `Difficulty` (GameDifficulty), `TrialOfIron`, `ExpertMode` persistent props.
+**Map / area:** Game layer `GetCurrentMap()/SetCurrentMap/GetLastMap/CurrentRegion/GetCurrentMapName()` [HERE]. SDK statics [verified]: `LoadedLevelName => SceneManager.GetActiveScene().name` (L132), `ApplicationLoadedLevelName { get; set; }` (L130), `CurrentSceneIsTransitionScene()` (scene `"oei_scene_transition"`).
 
-**Verdict:** Read combat/loading/gameover via `SDK.GameState` static props (`InCombat`, `IsLoading`, `GameOver`, `Paused`). Subscribe to `OnCombatStart/OnCombatEnd` events. `GameState.Instance` for map/region. Postfix `FinalizeLevelLoad` = "area load finished" event. All read-via-static-singleton; no virtual override needed.
+**Game over / death [verified]:**
+```csharp
+public static bool GameOver { get { return s_gameOver; } set { s_gameOver = value; } }   // L138
+public static bool PartyDead { get; set; }                                                // L109
+```
+On game over `UIDeathManager.Instance.ShowWindow()` fires ~2s after PartyDead [HERE].
+
+**Loading [verified]:**
+```csharp
+public static bool IsLoading { get; set; }                          // L65
+public static bool IsTransitionInProgress => IsLoading || s_firstLoad;   // L67
+public static bool IsRestoredLevel { get; set; }  LoadedGame { get; set; }  NewGame { get; set; }   // L63/69/71
+public static string LoadedFileName { get; set; }  public static SaveGameInfo LoadedSaveGameInfo { get; set; }  // L102/104
+public static event EventHandler LevelUnload;         // L166
+public static event EventHandler LevelLoadedEarly;    // L168
+public static event EventHandler LevelLoaded;         // L170
+public static event EventHandler LevelLoadedLate;     // L172
+public static event EventHandler Resting;             // L174
+// Game layer: FinalizeLevelLoad() fires the LevelLoaded* events then sets IsLoading=false — postfix = "load complete"
+```
+Also [verified]: `public static bool CheatsEnabled { get; set; }` (L78 — needed for console cheats), `PlayerSafeMode` (L107), `FirstPlaythrough`, `GameComplete`, `NumSceneLoads`, `public Guid PlaythroughGUID { get; set; }` (instance, L118).
+
+**Scene helpers [HERE]:** `LoadMainMenu(bool)`, `ChangeLevel(MapData/MapType/string)`, `LoadLevel(MapData/string)`, `BeginLevelUnload(string)`, `Autosave()`, `EndGameAndLoadCredits()`, `ReturnToMainMenuFromError()` (`public virtual` on SDK base L432). `public static GameMode Mode;` / `Option => Mode` [HERE]. Difficulty/TrialOfIron/ExpertMode persistent props [HERE].
+
+**Verdict:** read via SDK statics; subscribe `SDK.GameState.CombatStart/CombatEnd/LevelLoaded` **events** (correct names verified); postfix `Game.GameState.FinalizeLevelLoad` for load-done.
 
 ---
 
-## 2. Conversation system  [SDK / OEIFormats, inferred] + `UIConversationManager` [HERE]
+## 2. Conversation system — `Conversation.cs`, `ConversationManager.cs`, `FlowChart.cs`, `FlowChartPlayer.cs` (all firstpass root, GLOBAL namespace) [verified]
 
-Core flow classes live in `OEIFormats.FlowCharts` / `OEIFormats.FlowCharts.Conversations` / `SDK` (NOT decompiled here). All signatures below reconstructed from `UIConversationManager.cs` and `GameState.cs`/`GameResources.cs` usage.
-
-**Access to active conversation:**
+### ConversationManager (`firstpass/ConversationManager.cs`) : MonoBehaviour [verified]
 ```csharp
-ConversationManager.Instance                                   // static singleton [SDK]
-ConversationManager.Instance.GetActiveConversationForHUD()     // -> FlowChartPlayer (null if none)
-ConversationManager.IsWMEConversation(FlowChartPlayer)         // static bool (world-map-event convo)
-ConversationManager.Instance.EndConversation(FlowChartPlayer)
-ConversationManager.Instance.SetNodeCompleted(Conversation, int nodeId, bool complete)
-ConversationManager.Instance.GetNodeCompleted(Conversation, int nodeId)  // -> bool
-ConversationManager.Instance.GetMarkedAsRead(Conversation, int nodeId)   // -> bool
-ConversationManager.Instance.ReactivityPanelFadeTime           // float
-// delegate + event:
-ConversationManager.FlowChartPlayerDelegate  (void (FlowChartPlayer))
-ConversationManager.Instance.FlowChartPlayerAdded  // event of above delegate
-public static bool UIConversationManager.IsInConversation()    // [HERE] convenience
+public static ConversationManager Instance => s_instance;                                  // L40
+public delegate void FlowChartPlayerDelegate(FlowChartPlayer chartPlayer);                 // L13
+public FlowChartPlayerDelegate FlowChartPlayerAdded;    // L21 — public FIELD (not event); Game code Delegate.Combine's into it
+public FlowChartPlayerDelegate FlowChartPlayerRemoved;  // L23
+public FlowChartPlayer GetActiveConversationForHUD();                                      // L360
+public FlowChartPlayer StartConversation(string conversationFilename, GameObject owner, FlowChartPlayer.DisplayMode displayMode, bool disableVo = false);          // L205 — programmatic convo start
+public FlowChartPlayer StartConversation(string conversationFilename, int startNode, GameObject owner, FlowChartPlayer.DisplayMode displayMode, bool disableVo = false);  // L210
+public void EndConversation(FlowChartPlayer player, bool triggerScripts = true);           // L301
+public bool IsConversationActive(FlowChartPlayer);  public bool IsConversationOrSIRunning();  // L351/374
+public static bool IsWMEConversation(FlowChartPlayer player);                              // L248
+public void SetNodeCompleted(Conversation convo, int nodeID, bool complete);  bool GetNodeCompleted(Conversation, int);   // L392/397
+public void SetMarkedAsRead(Conversation, int nodeID);  bool GetMarkedAsRead(Conversation, int nodeID);  // L434/463
+public List<string> FindConversations(string search);                                      // L42
+public static string FormatConversationFilename(string filename);                          // L140
+public FlowChartPlayer StartScriptedInteraction(string conversationFilename, GameObject owner);   // L296
 ```
 
-**FlowChartPlayer** (the runtime cursor over a flowchart) [SDK]:
+### FlowChartPlayer (`firstpass/FlowChartPlayer.cs`) — plain class [verified, whole file]
 ```csharp
-.CurrentFlowChart      // FlowChart  (cast `as Conversation`)
-.CurrentNodeID         // int   <-- current node id
-.FlowChartDisplayMode  // FlowChartPlayer.DisplayMode enum { Standard, ... }
-.FadeFromBlackOnExit   // bool
-.Filename              // string (dialogue asset name)
+public enum DisplayMode { Standard, Cutscene, Interaction }
+public int StartNodeID { get; set; }   public int CurrentNodeID { get; set; }     // current node id
+public FlowChart CurrentFlowChart { get; set; }   public GameObject OwnerObject { get; set; }
+public DisplayMode FlowChartDisplayMode { get; set; }   public bool FadeFromBlackOnExit { get; set; }
+public bool Completed { get; private set; }   public void SetComplete();   public bool DisableVO { get; set; }
 ```
 
-**Conversation** (`OEIFormats.FlowCharts.Conversations.Conversation`) [SDK] — key methods used by UI:
+### FlowChart (`firstpass/FlowChart.cs`) : ScriptableObject [verified]
 ```csharp
-List<PlayerResponseNode> GetResponseNodes(FlowChartPlayer player);                 // ALL response links from current question node
-List<PlayerResponseNode> GetResponseNodes(FlowChartPlayer player, bool qualifiedOnly);
-FlowChartNode GetNextNode(FlowChartPlayer player);
-FlowChartNode GetNode(int nodeId);
-string GetActiveNodeText(FlowChartPlayer player);                                  // speaker/current node text
-string GetNodeText(FlowChartPlayer player, FlowChartNode node, bool forPlayerInput);
-string GetNodeText(FlowChartPlayer player, FlowChartNode node, bool forPlayerInput, Conversation.NodeTextRequestType);  // NodeTextRequestType { PassingOnly, ... }
-string GetNodeQualifier(FlowChartNode node, FlowChartPlayer player);
-List<NodeQualifierBase> GetNodeQualifiersHelper(PlayerResponseNode, FlowChartPlayer, bool checkpassing, bool passing, bool firstonly, bool forDisplayPurposes);
-bool PassesConditionalsEx(PlayerResponseNode response, FlowChartPlayer player);    // is option selectable
-void MoveToNode(int nodeId, FlowChartPlayer player);                               // ADVANCE conversation
-void MoveToPreviousNode(FlowChartPlayer player);
-List<FlowChartNode> GetAllNodesFromActiveNode(FlowChartPlayer player);             // debug mode enumeration
-static GameObject GetSpeaker(FlowChartPlayer player);
-static bool LocalizationDebuggingEnabled;   // static field
-static void ClearSpeakerGUIDCache();
-enum NodeTextRequestType { PassingOnly, ... }
+public void MoveToNode(int nodeID, FlowChartPlayer player);            // L69  <-- ADVANCE
+public void MoveToPreviousNode(FlowChartPlayer player);                // L127
+public FlowChartNode GetNode(int nodeID);                              // L141
+public FlowChartNode GetNextNode(FlowChartPlayer player);              // L230 (public; the List<FlowChartLink> overload is protected virtual)
+public List<FlowChartNode> GetAllNodesFromActiveNode(FlowChartPlayer player);   // L196
+public virtual void StartFlowChart(FlowChartPlayer player);  public void UpdateFlowChart(FlowChartPlayer player);
+public virtual string Filename { get; set; }   public const int INVALID_NODE_ID = -1;
+protected virtual bool PassesConditionals(FlowChartNode node, FlowChartPlayer player);   // L338
 ```
-**PlayerResponseNode / FlowChartNode** [SDK]:
+
+### Conversation (`firstpass/Conversation.cs`) : FlowChart [verified]
 ```csharp
-FlowChartNode.NodeID          // int
-FlowChartNode.NodeType        // FlowChartNodeType enum { PlayerResponse, ... }
-FlowChartNode.Links           // list of links
-FlowChartNode.ClassExtender.GetExtendedPropertyValue(string)  // e.g. "MaintainsStealth"
-PlayerResponseNode.Conditionals.Components   // list; Count>0 => stat-check option
-PlayerResponseNode.Persistence               // PersistenceType (MarkAsRead, ...)
-DialogueNode.HideSpeaker (bool), .DefaultMood; ScriptNode : FlowChartNode
+public enum NodeTextRequestType { Unspecified, PassingOnly, FailingOnly }                  // L14
+public static bool LocalizationDebuggingEnabled { get; set; }                              // L33
+public List<PlayerResponseNode> GetResponseNodes(FlowChartPlayer player);                  // L885  <-- response enumeration
+public List<PlayerResponseNode> GetResponseNodes(FlowChartPlayer player, bool qualifiedOnly);   // L890
+public string GetActiveNodeText(FlowChartPlayer player);                                   // L417
+public string GetActiveNodeRawText(FlowChartPlayer player);                                // L434
+public string GetNodeText(FlowChartPlayer player, FlowChartNode node, bool forPlayerInput, NodeTextRequestType requestType = NodeTextRequestType.Unspecified);   // L600  <-- TEXT RESOLUTION (patch to swap)
+public string GetNodeQualifier(FlowChartNode node, FlowChartPlayer player);                // L451
+public List<NodeQualifierBase> GetNodeQualifiersHelper(FlowChartNode node, FlowChartPlayer player, bool checkpassing, bool passing, bool firstonly, bool forDisplayPurposes);  // L472
+public bool PassesConditionalsEx(FlowChartNode node, FlowChartPlayer player);              // L829 (param type is FlowChartNode — PlayerResponseNode derives from it)
+public GameObject GetSpeaker(int nodeId);  GetSpeaker(FlowChartNode node);                 // L1042/1047 (instance)
+public static GameObject GetSpeaker(FlowChartPlayer player);                               // L1118 (static)
+public static void ClearSpeakerGUIDCache();                                                // L1113
+public void PlayVO(FlowChartNode currentNode, FlowChartPlayer player);  StopVO(int nodeID);  float GetVODuration(int nodeID);
 ```
-Display text is resolved through the flowchart's own StringTable (via `GetNodeText`/`GetActiveNodeText`); the returned string is already localized. The `int nodeID` maps to VO via `GameResources.GetVOAssetForConversation(dialogueName, nodeID, useFemale)`.
+Node data classes (`FlowChartNode.NodeID/.NodeType/.Links/.ClassExtender`, `PlayerResponseNode.Persistence/.Conditionals`, `DialogueNode.HideSpeaker`) are in **OEIFormats.dll** (not decompiled) — usage-derived. Display text resolution goes through the flowchart's StringTable inside `GetNodeText`; returned string is already localized. `int nodeID` → VO via `GameResources.GetVOAssetForConversation(dialogueName, nodeID, useFemale)` [HERE].
 
-**Pick a response programmatically:** call `conversation.MoveToNode(responseNodes[i].NodeID, player)` then advance (see `UIConversationManager.PlayerInput`). Or drive the UI method directly (§3).
-
-**Verdict:** Active convo read via `ConversationManager.Instance.GetActiveConversationForHUD()`. To intercept option text before render → postfix `Conversation.GetNodeText` (swap string) and/or `Conversation.GetResponseNodes` (reorder the returned List = shuffle). To know which option was chosen → patch `UIConversationManager.PlayerInput(int)` (§3). All SDK-side but Harmony-reachable.
+**Verdict [verified]:** postfix `Conversation.GetNodeText` (note 4th default param `NodeTextRequestType`) for text swap; postfix `Conversation.GetResponseNodes(FlowChartPlayer)` AND the 2-arg overload for order shuffle — both called by the UI each rebuild. `ConversationManager.Instance.StartConversation(...)` starts conversations programmatically. Pick response i = `flowchart.MoveToNode(responseNodes[i].NodeID, player)` (see §3 for the cleaner UI-level entry).
 
 ---
 
-## 3. Dialogue UI  — `UIConversationManager.cs` [HERE]  (`: UIHudWindow`, global namespace)
+## 3. Dialogue UI — `UIConversationManager.cs` [HERE, Assembly-CSharp] (verified against firstpass types)
 
-Singleton: `public static UIConversationManager Instance => s_Instance;` (`private static UIConversationManager s_Instance`).
-Active flowchart cached in fields: `private FlowChartPlayer m_ActiveFlowChart;  private int m_CurrentNodeId;`
-`private Conversation conversation => m_ActiveFlowChart?.CurrentFlowChart as Conversation;` (private prop).
-Text is drawn into `UIConsoleText ConversationTextList` (public field, alias `TextList`) — an NGUI `UILabel`-backed list. `ContinueButton` (UIMultiSpriteImageButton), `ContinueButtonLabel` (UILabel).
-
-**THE patch point for building the on-screen response list:**
+Singleton `UIConversationManager.Instance` (private `s_Instance`). Fields: `m_ActiveFlowChart` (FlowChartPlayer), `m_CurrentNodeId` (int), `ConversationTextList` (UIConsoleText, UILabel-backed), `ContinueButton`/`ContinueButtonLabel`.
 ```csharp
-private int DrawResponses();        // [HERE] normal mode — iterates conversation.GetResponseNodes(m_ActiveFlowChart),
-                                    //   formats "<n>. <text>" via conversation.GetNodeText(...), calls TextList.Add(text). Returns line count.
-private int DrawResponsesDebug();   // [HERE] localization-debug mode
+private int DrawResponses();                       // builds numbered response list from GetResponseNodes + GetNodeText, TextList.Add(...)
+private int DrawResponsesDebug();                  // localization-debug variant
+public void CheckRecreateContent();                // per-frame rebuild driver (Update, on node change or ForceRefresh)
+public override void HandleInput();                // input router:
+   int line = TextList.LineAt(GameInput.MousePosition);  int idx = LineToResponse(line);   // private int LineToResponse(int) => m_OutstandingResponses - TextList.ParagraphCount + line
+   if (GameInput.NumberPressed > 0) PlayerKeyInput(GameInput.NumberPressed - 1);   // Alpha1..9 → idx 0..8 (NumberPressed == -1 when none — verified §9)
+   GameInput.GetMouseButtonDown/Up(0, setHandled:true) → PlayerKeyInput(idx)
+   GameInput.GetControlDown/Up(MappedControl.CONV_CONTINUE) → continue button
+private void PlayerKeyInput(int number);           // dispatch
+private void PlayerInput(int number);              // <-- THE pick-response(i) method (0-based into GetResponseNodes list);
+                                                   //     validates PassesConditionalsEx, MoveToNode(responseNodes[number].NodeID)
+public static bool IsInConversation();
+public bool HasConversationNodeBeenCompletedAlready();
 ```
-`DrawResponses` reads `GetResponseNodes` order and numbers options 1..N. To **shuffle order** postfix/prefix `Conversation.GetResponseNodes` to reorder the list (cleaner than transpiling DrawResponses). To **swap text** postfix `Conversation.GetNodeText`. `DrawResponses` is called from `CheckRecreateContent()` [HERE] which is the per-frame rebuild driver (called from `Update()` when node changes or `ForceRefresh`).
-
-**Click / number-key → response index:**
-```csharp
-public override void HandleInput();   // [HERE] the input router. Uses:
-  int num  = TextList.LineAt(GameInput.MousePosition);   // screen line under cursor
-  int idx  = LineToResponse(num);                        // private int LineToResponse(int line) => m_OutstandingResponses - TextList.ParagraphCount + line
-  if (GameInput.NumberPressed > 0) PlayerKeyInput(GameInput.NumberPressed - 1);      // number keys 1-9
-  GameInput.GetMouseButtonDown(0, true) / GetMouseButtonUp(0, true)  -> PlayerKeyInput(idx)
-  GameInput.GetControlDown(MappedControl.CONV_CONTINUE) -> continue button
-private void PlayerKeyInput(int number);   // [HERE] dispatches to PlayerInput/PlayerInputDebug
-private void PlayerInput(int number);      // [HERE] <-- THE method invoked when player picks response index `number` (0-based).
-                                           //   validates via PassesConditionalsEx, calls MoveToNode(responseNodes[number].NodeID,...)
-```
-**Verdict:** Postfix `UIConversationManager.PlayerInput(int)` to observe/redirect the chosen index (0-based, indexes into `conversation.GetResponseNodes(m_ActiveFlowChart)`). To inject a choice, call `PlayerInput(i)` directly (public reflection) or feed virtual input so `HandleInput` picks it up. For text-swap + shuffle, hook the SDK `Conversation` methods above. `IsInConversation()` (static, [HERE]) is the gate.
+**Verdict:** postfix `PlayerInput(int)` to observe the chosen index; invoke it (reflection) to choose programmatically. Text/order hooks live at the Conversation level (§2). `IsInConversation()` is the gate.
 
 ---
 
-## 4. Reputation / factions
+## 4. Reputation / factions — `SDK/Reputation.cs`, `SDK/ReputationManager.cs` [verified] + Game layer [HERE]
 
-### FactionName enum — `FactionName.cs` [HERE]  (global namespace, int-backed)
-`None=0, ScarletChorus=1, Disfavored=2, Comp_Beastman=3 ... SK_Tunon=24, SK_GravenAshe=25, SK_VoicesSoldak=26, SK_BledenMark=27, Art_* ..., Player=64, ...` (117 values). These ints ARE the reputation/faction ids used everywhere (`(int)FactionName.SK_GravenAshe` == reputation id).
+`FactionName` enum [HERE, Assembly-CSharp/FactionName.cs], int-backed, 117 values: `None=0, ScarletChorus=1, Disfavored=2, Comp_*=3..11, Rebel_*=12..17, MageGuild_*=18..23, SK_Tunon=24, SK_GravenAshe=25, SK_VoicesSoldak=26, SK_BledenMark=27, Art_*=28.., Skirmish_Ally=40, Skirmish_Enemy=41(engine remaps 39/40 during skirmish), Player=64, ...`. `(int)FactionName.X` = reputation id.
 
-### Reputation — `Game/Reputation.cs` [HERE] : `SDK.Reputation`
+**SDK.Reputation [verified, firstpass/SDK/Reputation.cs]:**
 ```csharp
-public FactionName FactionID;                    // this rep's faction
-public ReputationType Type;                       // enum { Faction, Companion, Artifact, Archon, Count }
-enum ChangeStrength { None, VeryMinor, Minor, Average, Major, VeryMajor }  // (SDK.Reputation.ChangeStrength)
-enum Axis { Positive, Negative }                  // (SDK.Reputation.Axis) — Positive=Favor, Negative=Wrath
+public enum ChangeStrength { None, VeryMinor, Minor, Average, Major, VeryMajor }   // L10
+public enum Axis { Positive, Negative }    public enum RankType { ... }            // L20/26
+public static int MaxRank = 5;                                                     // L34 — public static FIELD
+public int PositiveAxisValue { get; set; }   // L188 — raw Favor points
+public int NegativeAxisValue { get; set; }   // L201 — raw Wrath points
+public int GoodRank { get; }   public int BadRank { get; }                          // L80/90
+public int GetRank(out RankType rankType);   public int GetAxisRank(Axis axis);     // L448/443
+public float GetReputationPct(Axis axis);    public int GetScaleForAxis(Axis axis); // L393/403
+public int PctToRank(float pct);   public string GetAxisDisplayName(Axis axisType); // L428/268
+public virtual void AddReputation(Axis axis, ChangeStrength strength);              // L262
+protected virtual void AddReputation(Axis axis, int amount);                        // L277 (int overload is protected)
+public virtual void RemoveReputation(Axis axis, ChangeStrength strength);  protected virtual void RemoveReputation(Axis axis, int amount);  // L330/336
+public virtual bool CanAddReputation(Axis, ChangeStrength) / (Axis, int);  CanRemoveReputation(...);   // L308/315/374/380
+public virtual int GetPointsThatCanBeAdded(Axis axis, int amount);                  // L320
+public FactionDatabaseString Name; Description; PositiveAxisName; NegativeAxisName; // fields L40-57
 ```
-**Read current favor/wrath** (base `SDK.Reputation` props, used throughout [SDK, inferred]):
-```csharp
-int  base.PositiveAxisValue  { get; set; }   // raw Favor points
-int  base.NegativeAxisValue  { get; set; }   // raw Wrath points
-int  base.GoodRank { get; }                  // Favor rank (0..MaxRank)
-int  base.BadRank  { get; }                  // Wrath rank
-int  GetRank(out RankType rankType);         // RankType { Good, Bad, Mixed }
-float GetReputationPct(Axis axis);
-int  GetScaleForAxis(Axis axis);
-static int SDK.Reputation.MaxRank;           // static (==5 effectively)
-DatabaseString Name; Name.GetText();  Description;
-```
-Game-layer helpers [HERE]: `IsFriendly()`, `IsHostile()`, `GetMaxRank(Axis)`, `int RecordCount`, `List<ChangeEvent> GetChangeEventsForAxis(Axis)`, `ForceHostile(int reason)`, `SetAxisRank(Axis, int rank, int reason)`, `AppendTooltipRankInfo(StringBuilder)`.
-`Reputation.ChangeEvent` [HERE] nested: `{ ChangeEventType m_type; Axis m_axis; ChangeStrength m_strength; int m_reasonIndex; string ReasonText; }`.
+**Game.Reputation [HERE]:** `FactionID` (FactionName), `Type` (ReputationType { Faction, Companion, Artifact, Archon }), `IsFriendly()/IsHostile()`, `ForceHostile(int)`, `SetAxisRank(Axis,int,int)`, `GetMaxRank(Axis)`, `GetChangeEventsForAxis(Axis)`, ChangeEvent record class.
 
-### ReputationManager — `Game/ReputationManager.cs` [HERE] : `SDK.ReputationManager`
-```csharp
-public new static ReputationManager Instance => SDK.ReputationManager.s_instance as ReputationManager;  // singleton
-public Reputation[] Factions;                        // all reputations
-public List<FactionName> Alliance;                   // [Persistent]
-public event Action<Reputation> OnReputationNewAbilityChanged;
-```
-**Read a faction's rep:** `SDK.Reputation GetReputation(int id, bool suppressWarnings=false)` [HERE override] — pass `(int)FactionName.X`. Cast result to `Game.Reputation`.
-**MUTATORS = favor/wrath event stream (postfix these) [HERE]:**
-```csharp
-public bool AddReputation(SDK.Reputation rep, Axis axis, ChangeStrength strength);                                  // override
-public bool AddReputation(SDK.Reputation rep, Axis axis, ChangeStrength strength, int reasonIndex, bool ignoreLinkedReputations=false);   // <-- canonical add
-public bool AddReputation(int factionId, Axis axis, ChangeStrength strength, int reasonIndex, bool ignoreLinkedReputations=false);
-public bool RemoveReputation(... same overloads ...);
-public string GetFactionName(FactionName id);
-public FactionName[] GetKnownFactionsOfType(Reputation.ReputationType, bool excludeNoLinks, bool excludeNoAbilities);
-```
-Note: adds are suppressed mid-conversation-node if the node was already completed (guards double-award). Belief is granted when `strength >= BeliefRepThreshold`.
+**Game.ReputationManager [HERE]:** singleton `ReputationManager.Instance` (`SDK.ReputationManager.s_instance as ...`), `Reputation[] Factions`, `List<FactionName> Alliance`, `event Action<Reputation> OnReputationNewAbilityChanged`, `GetReputation(int id, bool suppressWarnings=false)` [override],
+**mutator hooks:** `public bool AddReputation(SDK.Reputation rep, Axis axis, ChangeStrength strength, int reasonIndex, bool ignoreLinkedReputations=false)` (+ `(int factionId, ...)` and 3-arg override overloads) and matching `RemoveReputation` overloads — postfix = favor/wrath event stream. Adds suppressed if the conversation node was already completed; Belief granted at `strength >= BeliefRepThreshold`.
 
-### Faction — `Game/Faction.cs` [HERE] : `SDK.Faction` — this is the TEAM/hostility component (per-GameObject), distinct from Reputation. `SDK.Faction.ActiveFactionComponents` (static list, used in combat check), `faction.IsHostile(otherFaction)`, `CurrentTeam`/`CurrentTeamInstance`. `PartyMemberAI.ReputationFaction` (FactionName) links a companion to its Reputation.
-
-**Verdict:** Read favor/wrath via `ReputationManager.Instance.GetReputation((int)FactionName.X)` then `.PositiveAxisValue`/`.NegativeAxisValue`/`.GoodRank`/`.BadRank`. Postfix `ReputationManager.AddReputation`/`RemoveReputation` (the `(rep, axis, strength, reasonIndex, ignoreLinked)` overload) for a favor-event stream. Console cheat `reputationaddpoints` (SDK.CommandLine) ultimately calls these.
+**Verdict [verified]:** read `.PositiveAxisValue/.NegativeAxisValue/.GoodRank/.BadRank`; postfix the ReputationManager 5-arg mutators.
 
 ---
 
-## 5. Quests  — `Game/QuestManager.cs` [HERE] : `SDK.QuestManager`
+## 5. Quests — `SDK/QuestManager.cs` [verified] + `Game/QuestManager.cs` [HERE]
+
 ```csharp
-public new static QuestManager Instance => SDK.QuestManager.s_instance as QuestManager;   // singleton
-public event SDK.QuestManager.QuestDelegate OnQuestAdvanced;   // [SDK] delegate: void QuestDelegate(Quest quest)  <-- MILESTONE EVENT STREAM
+public static QuestManager Instance => s_instance;                                 // SDK L260
+public delegate void QuestDelegate(Quest quest);                                   // L197
+public QuestDelegate OnQuestStarted;     // L244 — public FIELDS (not events); Delegate.Combine to subscribe
+public QuestDelegate OnQuestCompleted;   // L248
+public QuestDelegate OnQuestFailed;      // L250
+public QuestDelegate OnQuestAdvanced;    // L256   <-- milestone stream (all four verified)
+public void TriggerQuestEndState(string questName, int endStateID, bool failed);   // L1084
+public void TriggerQuestEndState(Quest quest, int endStateID, bool failed);        // L1108
+public void TriggerGlobalVariableEvent(string globalVariableName, int variableValue);   // L1341 — fired by GlobalVariables.SetVariable!
+public List<string> FindLoadedQuests(string search);
+// Game layer [HERE]: protected override CompleteQuestObjective(Quest, ObjectiveNode); CompleteQuest(Quest);
+//                    public CompleteAndRemoveQuest(string/Quest); static FormatQuestName(string) on SDK base
 ```
-Quest objects: `OEIFormats.FlowCharts.Quests.Quest` [SDK]. `quest.Filename` (string id). `ObjectiveNode` [SDK].
-**Advance / end-state methods (postfix = milestones):**
-```csharp
-protected override void CompleteQuestObjective(Quest quest, ObjectiveNode objective);   // [HERE override]
-protected override void CompleteQuest(Quest quest);                                     // [HERE override]
-public void CompleteAndRemoveQuest(string questName);  public void CompleteAndRemoveQuest(Quest);   // [HERE]
-// inherited [SDK]:
-void TriggerQuestEndState(Quest quest, int endStateIndex, bool failed);
-static string SDK.QuestManager.FormatQuestName(string);
-Dictionary<string,Quest> LoadedQuests;   // base.LoadedQuests keyed by Filename
-base.QuestTrackers[quest.Filename].QuestLevel;   // quest tracker data
-```
-**Verdict:** Subscribe to `QuestManager.Instance.OnQuestAdvanced` (simplest milestone stream) OR postfix `CompleteQuest`/`CompleteQuestObjective`/`TriggerQuestEndState`. Quest ids = `quest.Filename`. Also see `TriggerQuestObjective.cs`, `UIJournalQuestObjective.cs`, `UIQuestNotifications` (`.PushQuest`).
+Quest ids = `quest.Filename` (`OEIFormats.FlowCharts.Quests.Quest`). `base.LoadedQuests` Dictionary keyed by formatted filename; `base.QuestTrackers[filename].QuestLevel`.
+**Verdict [verified]:** Delegate.Combine into `OnQuestAdvanced`/`OnQuestCompleted`/`OnQuestFailed` fields, or postfix `TriggerQuestEndState`/`CompleteQuest*`.
 
 ---
 
-## 6. Global variables  — `SDK.GlobalVariables` [SDK, inferred]  (unqualified `GlobalVariables` in Game code)
-Not decompiled here; reconstructed from ~30 call sites (GameState, Edict, Conditionals, etc.):
+## 6. Global variables — `firstpass/GlobalVariables.cs` (GLOBAL namespace, MonoBehaviour) [verified, whole file]
+
 ```csharp
-GlobalVariables.Instance                              // singleton (MonoBehaviour; `(bool)GlobalVariables.Instance` guards)
-int  GlobalVariables.Instance.GetVariable(string name);          // returns int (game vars are ints; bool as 0/1)
-void GlobalVariables.Instance.SetVariable(string name, int value);   // <-- setter; postfix = global-var change stream
-static void GlobalVariables.WriteGlobalsToSaveGame();  // called in GameResources.SaveGame
-static void GlobalVariables.ReadGlobalsFromSaveGame(); // called in GameResources.LoadGame
-// also indexing helpers seen: GlobalVariables.Length / .Count (static-ish, on the collection)
+public static GlobalVariables Instance => s_instance;
+public int  GetVariable(string name);        // returns -1 if key missing (NOT 0 — verified L130)
+public void SetVariable(string name, int val);   // L108 — upserts Hashtable m_data, then calls
+                                                 //   QuestManager.Instance.TriggerGlobalVariableEvent(name, value)  <-- built-in event fan-out
+public void QueueVariable(string name, int val); // thread-safe deferred set (applied in Update)
+public bool IsValid(string variableName);
+public static void WriteGlobalsToSaveGame();     // writes {Application.persistentDataPath}/CurrentGame/globals.dat  (hardcoded — see §8)
+public static void ReadGlobalsFromSaveGame();
+public const string Difficulty = "_g_Difficulty";
 ```
-Example keys seen: `"_g_Difficulty"`, `"Act1_Gameover"`, `"tel_first_playthrough"`, edict break vars (`Edict.HowToBreakEdictVar.Name`).
-`GlobalVariableString` [HERE-ish] wraps a var name (`.Name`). `GlobalVariableConditional.cs`, `ConditionalizedGlobalSetting.cs` are [HERE].
-**Verdict:** Read via `GlobalVariables.Instance.GetVariable("key")`. Postfix `SDK.GlobalVariables.SetVariable(string,int)` for a full mutation event stream (this is how nearly all story state flips). Confirm the exact method sig against the SDK dll (only `GetVariable`/`SetVariable` name+shape are certain here).
+Backing store: `[Persistent] private Hashtable m_data` (string→int, 4096 cap). Defaults loaded from `{dataPath}/data/design/globalvars/game.globalvariables`. Example keys: `"_g_Difficulty"`, `"Act1_Gameover"`, edict break vars (`Edict.HowToBreakEdictVar.Name`).
+**Verdict [verified]:** postfix `SetVariable(string,int)` for the mutation stream — or skip the patch and hook `QuestManager.TriggerGlobalVariableEvent(string,int)` which SetVariable already calls. Reads return -1 for unknown keys.
 
 ---
 
-## 7. Time  — `Game/WorldTime.cs` [HERE] : `SDK.WorldTime`  +  `SDK.TimeController` [SDK]
+## 7. Time — `Game/WorldTime.cs` [HERE] : `SDK.WorldTime` [verified] + `firstpass/TimeController.cs` (GLOBAL ns) [verified, whole file]
 
-### WorldTime (in-game calendar / Edict countdown source) [HERE]
+### SDK.WorldTime [verified, firstpass/SDK/WorldTime.cs]
 ```csharp
-public new static WorldTime Instance => SDK.WorldTime.s_instance as WorldTime;
-base.CurrentTime : OEIDateTime   // { int Year, Month, Day, Hour, Minute, Second; long TotalSeconds; AddSeconds/AddHours/AddYears; GetTime(); GetDate(); }
-base.AdventureStart : OEIDateTime;
-int TotalSecondsToday { get; }   int SecondsPerDay/Hour/Day/Year;  int HoursPerDay=24; DaysPerMonth=26; MonthsPerYear=14;
-float DayNightTime { get; }      bool IsCurrentlyDaytime()/IsCurrentlyNighttime();
-public void AdvanceTimeBySeconds(int);  AdvanceTimeBySeconds(int,bool isTravel,bool isResting);
-public void AdvanceTimeByHours(int, bool isResting);  AdvanceTimeToHour(int);
-public event WorldTimeEventHandler OnTimeJump;   // WorldTimeEventHandler(int gameSeconds, bool isMapTravel, bool isResting)  [HERE, WorldTimeEventHandler.cs]
+public static WorldTime Instance => s_instance;
+public OEIDateTime CurrentTime { get; set; }   public OEIDateTime AdventureStart { get; set; }
+public TimeInterval TimeInCombat { get; set; }  TimeSpentTravelling { get; set; }
+public int CurrentSecond/CurrentMinute/CurrentHour { get; }   public int FrameWorldSeconds { get; protected set; }
+public float RealWorldPlayTime { get; set; }   public abstract int GameSecondsPerRealSecond { get; }
 ```
-The Edict/"Day of Swords" countdown is driven off `WorldTime.Instance.CurrentTime` vs target dates (see `UIWorldTimeHUDDisplay.cs`, `WorldTimeEventHandler.cs`, `AchievementTracker.HasDayOfSwordsArrive...`). No single "DayOfSwords" counter class; it's date comparisons + `GlobalVariables`.
+Game layer [HERE]: `AdvanceTimeBySeconds(int[,bool isTravel,bool isResting])`, `AdvanceTimeByHours(int,bool)`, `AdvanceTimeToHour(int)`, `event WorldTimeEventHandler OnTimeJump` (`(int gameSeconds, bool isMapTravel, bool isResting)`), calendar constants (26-day months, 14-month years, HoursPerDay=24). Edict/"Day of Swords" countdown = date math on `CurrentTime` + GlobalVariables (no dedicated countdown class; cf. `AchievementTracker.TrackedAchievementStat.HasDayOfSwordsArriveWithoutTakingVedrienWell`).
 
-### TimeController (pause + game speed) — `SDK.TimeController` [SDK, inferred from ~40 sites]
+### TimeController [verified — the pause/speed authority]
 ```csharp
-TimeController.Instance                       // singleton
-bool  Paused        { get; set; }             // hard pause (writes Time.timeScale internally)
-bool  SafePaused    { get; set; }             // safe/auto pause (used by AutoPause, focus loss)
-bool  PlayerPaused  { get; }                  // player-initiated pause
-bool  Slow          { get; set; }   void ToggleSlow();   bool Fast { get; set; }   // speed tiers
-bool  ProhibitPause { get; set; }             // main menu sets true
-bool  UiPaused      { get; }                  // window-manager pause
-bool  CanPause      { get; }
-event ... PauseChanged;                       // subscribe for pause state changes (ShowOnPause.cs)
-void  Flash(float speed);   static float FlashSpeed;   // flash/fast-forward
-void  AddPausedSource(...); bool IsAudioSourcePaused(...);
-static float TimeController.sUnscaledDelta;    // unscaled dt for UI
+public static TimeController Instance { get; private set; }
+public bool ProhibitPause;                       // public field (main menu sets true)
+public float NormalTime = 1f;                    // public INSTANCE FIELDS — the three speed tiers.
+public float SlowTime = 0.2f;                    //   Overwrite these for arbitrary speed values!
+public float FastTime = 1.8f;
+private float m_TimeScale;                       // current desired scale
+private float TimeScale { get; set; }            // PRIVATE property wrapping m_TimeScale (setter also stores m_resumeTime out of combat)
+public bool Paused   { get { return Time.timeScale == 0f; } set /* m_PlayerPaused = value; UpdateTimeScale(prev) */ }
+public bool SafePaused { get => Paused; set { if (!value || CanPause) Paused = value; } }
+public bool PlayerPaused => m_PlayerPaused;   public bool UiPaused { get; set; }   public bool CanPause { get; }
+public bool Slow { get => TimeScale == SlowTime; set }   public bool Fast { get => TimeScale == FastTime; set }
+public void SetNormal();  ToggleSlow();  ToggleFast();
+public void Flash(float speed);                  // <-- ARBITRARY MULTIPLIER API: sets TimeScale = speed (public!)
+public static float FlashSpeed { get; }          // current flash scale (1f if not flashed)
+public event Action<bool> PauseChanged;
+public static float sUnscaledDelta => Time.unscaledDeltaTime;
+private void UpdateTimeScale();                  // THE Time.timeScale writer: paused→0, cutscene→1, else TimeScale.
+                                                 //   Called every Update() when !GameState.IsTransitionInProgress → stomps external writes each frame.
 ```
-**`Time.timeScale` is written by TimeController (SDK) at runtime.** Direct `Time.timeScale = x` writes in THIS assembly are only menu/creation/credits ([UIMainMenuManager](tools/extracted/assembly_csharp/UIMainMenuManager.cs) L207/237/452 set `=1f`; `GameUtilities.cs:2465` sets `=0f`; `UICharacterCreationEnumSetter.cs:643-646`).
-**Verdict — game speed control:** prefer `TimeController.Instance` (`.Slow`, `.Fast`, `.Paused`, `.SafePaused`). For arbitrary multiplier not exposed by tiers, set `UnityEngine.Time.timeScale` directly but note TimeController may overwrite it each frame — you may need to prefix-patch the TimeController setter or the property that computes timeScale. `WorldTime.Instance` for the calendar; postfix `WorldTime.AdvanceTimeBySeconds` or subscribe `OnTimeJump` for time-advance events.
+**Verdict [verified]:** For arbitrary game speed call `TimeController.Instance.Flash(x)` (public — exactly the `Flash` console cheat) or set `NormalTime`/private `m_TimeScale` via reflection. Do NOT write `Time.timeScale` directly — `UpdateTimeScale()` overwrites it every frame; if you must force a value, postfix `UpdateTimeScale` (private, no-arg) as the final authority. Pause via `Paused`/`SafePaused` setters; `PauseChanged` event for notifications. Note combat-end resets scale to `m_resumeTime` (CombatEnd subscriber).
 
 ---
 
-## 8. Save / load  — `Game/GameResources.cs` [HERE] : `SDK.GameResources`  +  `SDK.SaveGameInfo` / `SDK.PersistenceManager` [SDK]
+## 8. Save / load — `Game/GameResources.cs` [HERE] : `SDK.GameResources` [verified] + `SaveGameInfo`/`PersistenceManager` (GLOBAL ns) [verified]
 
-**Programmatic save [HERE, static]:**
+**Programmatic API [HERE, static]:** `Game.GameResources.SaveGame(string filename)` / `SaveGame(string filename, string userString, bool ShouldCloudSync=false) : bool` (returns false while `InCombat`/`IsTransitionInProgress`) and `LoadGame(string filename) : bool`; `LoadLastGame(bool fadeOut)`, `GetContinueSaveGame()`, `DeleteSavedGame(string,bool)`, `LoadSaveFile(string, SaveGameInfo.SizeStyle)`, `SaveGameExists([string])`. `Game.GameState.Autosave()` [HERE].
+
+**Save directory seam [verified — firstpass/SDK/GameResources.cs L35-63]:**
 ```csharp
-public static bool SaveGame(string filename);
-public static bool SaveGame(string filename, string userString, bool ShouldCloudSync=false);
-   // returns false if InCombat or IsTransitionInProgress; calls TakeScreenShot, FogOfWar.Save,
-   // GlobalVariables.WriteGlobalsToSaveGame, SDK.GameResources.BuildSaveFile, sets SDK.GameState.LoadedFileName.
-public static void Autosave();  // in GameState.cs — GameResources.SaveGame(UISaveLoadManager.GetAutosaveFileName(...))
+public static string SaveGamePath { get {
+    // default: PersistentDataPath
+    // Windows: Path.Combine(WindowsPathHelper.GetSaveGameDirectory(), "Tyranny")   // "Saved Games\Tyranny"
+    // OSX / Linux (XDG_DATA_HOME) variants...; CREATES the dir if missing; returns it
+}}
+public static string PersistentDataPath => GameUtilities.FilePath_AppPersistentDataPath();   // L29
+public static string TemporaryCachePath => ...;   public static string DataPath => ...;      // L33/31
+public static bool SaveFileExists(string saveName);              // Path.Combine(SaveGamePath, saveName)
+public static SaveGameInfo BuildSaveFile(string name, string userString);   // L211 — appends ".savegame", PersistenceManager.SaveGame(), SaveGameInfo.Save(...)
+public static event LoadedSave EventPreSaveGame; EventLoadedSave; EventPreloadGame;   // L65-69 (raisers OnPreSaveGame/OnLoadedSave/OnPreloadGame)
 ```
-**Programmatic load [HERE, static]:**
-```csharp
-public static bool LoadGame(string filename);         // full load: unpacks zip, LoadLevel, ReadGlobalsFromSaveGame
-public static void LoadLastGame(bool fadeOut);        // loads most-recent save
-public static SaveGameInfo GetContinueSaveGame();
-public static SaveGameInfo LoadSaveFile(string filename, SaveGameInfo.SizeStyle sizeStyle);   // metadata/data load
-public static bool SaveGameExists();  SaveGameExists(string);  GetCachedSaveGameInfo(string);
-public static void DeleteSavedGame(string filename, bool removeCloudSave);
-```
-**SaveGameInfo** [SDK]: `.FileName`, `.MapName`, `.Difficulty`, `.RealTimestamp`, `.SaveVersion`, `.CloudState`; `static List<SaveGameInfo> CachedSaveGameInfo`; `static bool SaveGameExists()`; `static void WaitUntilSafeToSaveLoad()`; `static bool SaveCachingComplete()`; `static event OnSaveCachingComplete`; `static SaveGameInfo Load(path, SizeStyle)`. `SizeStyle { DataOnly, ... }`.
+**Redirect verdict [verified]:** prefix-patch the `SDK.GameResources.SaveGamePath` **static getter** (skip original, return per-instance dir) — every save/load/list path `Path.Combine`s on it. **BUT for full per-instance isolation you must ALSO handle** (verified hardcoded paths):
+- `PersistenceManager.s_tempSavePath = Path.Combine(Application.persistentDataPath, "CurrentGame")` — **public static field** (firstpass/PersistenceManager.cs L15; also `s_mobileObjPath` L17 derives from it, `s_oldTempSavePath` L13). The working level/mobile-object data lives here and is SHARED between concurrent instances. Rewrite these three static fields at plugin init (before any save/load activity).
+- `GlobalVariables.WriteGlobalsToSaveGame()/ReadGlobalsFromSaveGame()` hardcode `Path.Combine(Application.persistentDataPath, "CurrentGame")/globals.dat` **inline** (do not use s_tempSavePath) — patch these two statics too, or accept that globals.dat stays shared.
 
-**Save DIRECTORY (patch point to redirect saves per instance):**
-```csharp
-SDK.GameResources.SaveGamePath        // [SDK] static string property — the save folder. Every save/load Path.Combine(SaveGamePath, filename).
-SDK.GameResources.TemporaryCachePath  // [SDK] static string — temp/screenshot/zip staging
-SDK.GameResources.BasePath            // [SDK] static string
-SDK.GameResources.GetOverridePath(name)  // [SDK]
-```
-**Redirect strategy:** prefix/postfix-patch the `SDK.GameResources.SaveGamePath` getter to return a per-instance folder — this cleanly redirects ALL saves & loads for that process.
+**SaveGameInfo [verified, firstpass/SaveGameInfo.cs]:** consts `QUICK_SAVE="quicksave.savegame"`, `AUTO_SAVE="autosave.savegame"`, `SAVE_EXTENSION=".savegame"`, `CurrentSaveVersion=5`, `SAVE_FILENAME="saveinfo.xml"`; public fields `PlayerName, MapName, SceneTitle, FileName, UserSaveName, CloudSaveGUID`; `static List<SaveGameInfo> CachedSaveGameInfo { get; }` (L174); `static event Action OnSaveCachingComplete` (L197); `static void WaitUntilSafeToSaveLoad()` (L246); `static bool IsSavingThreadAlive` (L162); `SizeStyle` enum; `.RealTimestamp`, `.Difficulty`, `.SaveVersion` (usage).
 
-**Loading completion detection:** `SDK.GameState.IsLoading` flips false in `GameState.FinalizeLevelLoad()` [HERE]; also `SDK.GameState.OnLevelLoaded`/`OnLevelLoadedLate` events and `ScriptEvent.ScriptEvents.OnLevelLoaded`. `s_sentOnLevelLoaded` static bool [HERE].
+**Load-completion detection [verified]:** `SDK.GameState.IsLoading` false-edge (set in `Game.GameState.FinalizeLevelLoad`), or subscribe `SDK.GameState.LevelLoaded/LevelLoadedLate` events, or `SDK.GameResources.EventLoadedSave` (raised via `OnLoadedSave()` at the end of `Game.GameResources.LoadGame`).
 
-**PersistenceManager** [SDK, static]: `SaveGame()`, `LoadGame()`, `GetLevelFilePath(sceneName)`, `LevelLoaded()`, `ClearTempData()`, `ClearPersistenceObjects()`, `MobileObjects`/`PersistentObjects` (Dictionary<GUID,ObjectPersistencePacket>), `s_tempSavePath`.
-
-**Verdict:** Save = `GameResources.SaveGame(name, userString)`; Load = `GameResources.LoadGame(name)`; both static, directly callable. Redirect per-instance by patching `SDK.GameResources.SaveGamePath` getter. Detect load-done via `SDK.GameState.IsLoading` false-edge or postfix `FinalizeLevelLoad`. NOTE: SaveGame refuses while `InCombat`/`IsTransitionInProgress`.
+**PersistenceManager [verified, firstpass/PersistenceManager.cs]:** `static void SaveGame()` (L254), `static string GetLevelFilePath(string levelName)` (L268), `LevelLoaded()` (L483), `ClearPersistenceObjects()` (L197), `MobileObjects`/`PersistentObjects` (Dictionary<Guid, ObjectPersistencePacket>), `ModifySavedValue(Guid, Type component, string variable, object newValue)` / `GetSavedValue(...)` (L75/L110 — handy for save surgery), `static event EventHandler OnLoadObjects` (L29).
 
 ---
 
-## 9. Input  — `SDK.GameInput` [SDK, inferred]  +  `Game/GameCursor.cs` [HERE]  +  `UICamera.cs` [HERE, NGUI]
+## 9. Input — `firstpass/GameInput.cs` (GLOBAL namespace, MonoBehaviour) [verified, whole file] + `SDK.GameCursor` [verified] + NGUI `UICamera` [HERE]
 
-### GameInput — `SDK.GameInput` [SDK] (unqualified `GameInput`). NOT decompiled; ~70 call sites. This is the CENTRAL input wrapper — prefix-patch these statics to inject virtual input.
+### GameInput — THE world-input wrapper. All members verified:
 ```csharp
-GameInput.Instance                                  // singleton (MonoBehaviour)
-// --- position / delta (static properties) ---
-GameInput.MousePosition           // Vector2/3 screen pos (used by UIConversationManager)
-GameInput.GlobalMousePosition     // Vector3
-GameInput.MouseDelta              // Vector3
-GameInput.WorldMousePosition      // Vector3 world-space
-GameInput.WorldMousePositionOnNav // Vector3 (navmesh-projected)
-// --- buttons (static methods) ---
-bool GameInput.GetMouseButton(int button, bool setHandled);
-bool GameInput.GetMouseButtonDown(int button, bool setHandled);
-bool GameInput.GetMouseButtonUp(int button, bool setHandled);
-// --- keys ---
-bool GameInput.GetKeyDown(KeyCode);   GetKeyDown(KeyCode, bool setHandled);
-bool GameInput.GetKeyUp(KeyCode);     GetKeyUp(KeyCode, bool setHandled);
-bool GameInput.GetShiftkey();  GameInput.GetControlkey();
-int  GameInput.NumberPressed;         // int property: 1-9 number-row key this frame (0 if none)
-// --- mapped controls (rebindable actions) ---
-bool GameInput.GetControl(MappedControl);      GetControlDown(MappedControl [,bool handle]);  GetControlUp(MappedControl);
-bool GameInput.GetControlDoublePressed(MappedControl);
-// --- state flags / blocking ---
-bool GameInput.DisableInput      { get; set; }   // master world-input disable
-bool GameInput.ClickHandled      { get; set; }   // "click already consumed this frame"
-bool GameInput.SelectDead        { get; }
-void GameInput.BeginBlockAllKeys();  GameInput.EndBlockAllKeys();
+public static GameInput Instance { get; private set; }
+public static bool DisableInput { get; set; }                        // master gate — most Get* return false when true
+public static int NumberPressed => s_NumberPressed;                  // -1 when none (NOT 0). Set in Update from Alpha0-9 / Keypad0-9.
+public static bool ClickHandled { set; }                             // SET-ONLY property (no getter!) — setting true calls HandleAllClicks()
+public static Vector3 MousePosition => Input.mousePosition;          // passthrough — Vector3
+public static Vector3 MouseDelta => Input.mousePosition - s_lastMouse;
+public static Vector3 GlobalMousePosition => s_globalMousePos;       // accumulated from GetAxisRaw("Mouse X/Y")
+public static Vector3 WorldMousePosition => s_pickLocation;          // world point (raycast vs "Walkable" layer, computed in Update)
+public static bool WorldMousePositionOnNav => s_pickLocationOnNavMesh;
+// buttons / keys (each checks DisableInput + per-frame handled arrays, then delegates to UnityEngine.Input):
+public static bool GetMouseButtonDown(int button, bool setHandled);
+public static bool GetMouseButtonUp(int button, bool setHandled);
+public static bool GetMouseButton(int button, bool setHandled);      // setHandled unused; returns Input.GetMouseButton
+public static bool GetMouseButtonHeld(int button[, bool setHandled]); // hold-timer based (s_heldMouseButtons)
+public static bool GetKeyDown(KeyCode key[, bool setHandled]);
+public static bool GetKeyUp(KeyCode key[, bool setHandled]);
+public static bool GetKey(KeyCode key);                              // PURE passthrough — does NOT check DisableInput
+public static bool GetShiftkey(); GetControlkey(); GetAltkey(); GetCommandKey();
+public static bool GetDoublePressed(KeyCode key, bool handle);
+// mapped controls — resolve MappedControl → List<KeyControl> via GameState.Controls, then funnel into the KeyControl overloads:
+public static bool GetControl(MappedControl control);   GetControl(MappedControl, bool ignoreHandle, bool ignoreModifiers);
+public static bool GetControlDown(MappedControl control[, bool handle]);   GetControlUp(MappedControl control[, bool handle]);
+public static bool GetControlDown(KeyControl control, bool handle);        GetControlUp(KeyControl control, bool handle);   // ← THE funnels (call Input.GetKeyDown/Up + modifier check)
+public static bool GetControl(KeyControl control, bool ignoreHandle, bool ignoreModifiers);
+public static bool GetControlDoublePressed(MappedControl control);
+public static bool GetControlDownWithoutModifiers(MappedControl/KeyControl);  GetControlUpWithoutModifiers(...);
+// blocking / consuming:
+public static void HandleAllKeys(); HandleAllClicks(); BeginBlockAllKeys(); EndBlockAllKeys();
+public static void HandleAllKeysExcept(KeyCode / KeyCode,KeyCode / MappedControl);  HandleAllClicksExcept(KeyCode / KeyCode[]);
+public static bool LmbAvailable();
+public static bool SelectDead;                                       // public static field
+public event HandleInput OnHandleInput;                              // instance event, fired at END of Update() — post-pick hook
 ```
-`MappedControl` [SDK] enum: `CONV_CONTINUE`, `TOGGLE_CONSOLE`, ... (rebindable). `SDK.GameState.Controls = MappedInput.DefaultMapping.Copy()` (loaded from prefs).
+**Virtual-input injection verdict [verified]:**
+- **Buttons/keys:** prefix `GetMouseButtonDown/Up/GetMouseButton(int,bool)`, `GetKeyDown/GetKeyUp(KeyCode,bool)`, `GetKey(KeyCode)`, and the **KeyControl funnels** `GetControlDown/GetControlUp(KeyControl,bool)` + `GetControl(KeyControl,bool,bool)` (single choke point for all mapped controls), plus the `NumberPressed` getter. Return injected state via `__result`, skip original.
+- **Cursor position / world pick:** prefixing `MousePosition` alone is NOT sufficient — `GameInput.Update()` reads **`Input.mousePosition` directly** for the Walkable-layer raycast and the character-hover scan, then publishes results to `s_pickLocation`, `GameCursor.WorldPickPosition`, and `GameCursor.CharacterUnderCursor`. Easiest full injection: **postfix `GameInput.Update`** (private instance method — patchable) and overwrite the outcome statics — `GameCursor.WorldPickPosition { get; set; }` and `GameCursor.CharacterUnderCursor` are **publicly settable** [verified SDK/GameCursor.cs L115/L39] — plus prefix `MousePosition`/`GlobalMousePosition` getters for UI code that reads them (e.g. `UIConversationManager.HandleInput`'s `TextList.LineAt(GameInput.MousePosition)`).
+- `DisableInput` gates everything except `GetKey`; keep it false while injecting, or bypass it in your prefixes.
 
-**Verdict — inject virtual input:** prefix-patch the `GameInput` static getters/methods to return your injected values: override `MousePosition`/`WorldMousePosition`/`GetMouseButtonDown(0,*)`/`GetKeyDown`/`NumberPressed`/`GetControlDown`. Because the whole game reads input exclusively through `GameInput.*`, patching here injects a fully virtual cursor+mouse+keyboard without touching UnityEngine.Input. This is the recommended virtual-input seam.
-
-### GameCursor — `Game/GameCursor.cs` [HERE] : `SDK.GameCursor` (screen→world + object-under-cursor)
+### SDK.GameCursor [verified, firstpass/SDK/GameCursor.cs]
 ```csharp
-public new static GameCursor Instance;
-static Vector3 SDK.GameCursor.WorldPickPosition;   // [SDK] world point under cursor (used by SpawnPrefabAtMouse)
-static GameObject SDK.GameCursor.GenericUnderCursor / CharacterUnderCursor / ColliderUnderCursor / UnusableUnderCursor / OverrideCharacterUnderCursor;  // [SDK] hover targets
-static bool GameCursor.LockCursor { get; set; }
-static CursorType GameCursor.DesiredCursor / UiCursor / ActiveCursor / CursorOverride;   // enum CursorType {None,Normal,Walk,Attack,Talk,...} [HERE]
+public static Vector3 WorldPickPosition { get; set; }        // L115 — SETTABLE
+public static GameObject CharacterUnderCursor { get; set; }  // L39 — settable
+public static GameObject GenericUnderCursor;  ObjectUnderCursor;  OverrideCharacterUnderCursor;   // L59/87/17
+public static Collider2D ColliderUnderCursor { get; set; }   // L103
+public static Usable UnusableUnderCursor { get; set; }   public static bool BlockCursor { get; set; }   // L37/19
+public static GameCursor Instance => s_instance;             // L35
 ```
-Screen→world click mapping is done in the SDK cursor pick (raycast to `Walkable`/collider layers) exposed via `WorldPickPosition` + `*UnderCursor`. World clicks are consumed by `Faction.cs` (character select, L227/252), `FieldInteraction.cs`, `GAT.cs`, `Container/Door`, `InGameHUD.cs` — all reading `GameInput`.
+Game layer [HERE]: `GameCursor.LockCursor { get; set; }`, `DesiredCursor/UiCursor/ActiveCursor/CursorOverride` (CursorType enum, 50+ values), `UiObjectUnderCursor` (static field).
 
-### UICamera.cs [HERE, NGUI] — NGUI event router for UI clicks. CONFIRMED hooks:
+### NGUI UICamera [HERE, Assembly-CSharp/UICamera.cs] — CONFIRMED hooks:
 ```csharp
 public static UICamera.OnCustomInput onCustomInput;   // L106 — static delegate invoked every UICamera.Update (L660-662). Feed virtual NGUI nav here.
-public static bool inputHasFocus;                     // L124 — true when an NGUI UIInput has focus (text entry active). Read to know if typing.
+public static bool inputHasFocus;                     // L124 — true when an NGUI UIInput has focus (text entry active).
 ```
-IMPORTANT: `UICamera` reads **raw `UnityEngine.Input.GetKeyDown(...)` directly** for UI navigation (arrows/submit/cancel/tab/delete — L449-923), NOT `GameInput`. So to drive NGUI UI (dialogue option colliders, menus, name field) you must inject at `UnityEngine.Input` level or via `onCustomInput`; `GameInput`-level injection only covers world/gameplay input. Dialogue options are NGUI colliders routed through UICamera, but `UIConversationManager.HandleInput` reads them via `GameInput` (§3) — so the conversation option path is GameInput-driven, while generic menu nav is UnityEngine.Input-driven. Plan for BOTH input seams.
+IMPORTANT: `UICamera` reads **raw `UnityEngine.Input.GetKeyDown(...)` directly** for UI navigation (arrows/submit/cancel/tab/delete — L449-923), NOT `GameInput`. So generic NGUI menu nav needs raw-Input-level injection or `onCustomInput`; the conversation option path however goes through `GameInput` (§3) and is coverable via the GameInput seam alone. Plan for BOTH seams.
 
 ---
 
-## 10. Character creation & level-up UI  — `UICharacterCreationManager.cs` [HERE] (global namespace) + `UICharacterCreation*` (~55 files)
-```csharp
-public static UICharacterCreationManager Instance => s_Instance;   // (private static s_Instance)
-```
-Used as a mode gate elsewhere: `if (... && !UICharacterCreationManager.Instance)` in `GameState.Update()` (L716) — i.e. `Instance` is non-null only while the creation screen exists → **use `UICharacterCreationManager.Instance != null` as "in character creation" mode detection.** New-game flow loads scene `"LifePath"` (character creation scene, see §11). Level-up shares `UICharacterCreation*` widgets (`UICharacterCreationController.cs`, `UICharacterCreationStage.cs`, `UICharacterCreationNavControl.cs`).
-Name entry: `UICharacterCreationNameSetter.cs` [HERE] drives the name field via `base.Owner.Character.Name`, with `IsValidName(string)` validation and an `ErrorIndicator` shown when the name is empty/invalid (L120). **A valid non-empty name appears required to advance** (validation gate present) — so a headless "just start a game" flow must set `Character.Name` to a valid string (via the setter or directly on the player CharacterStats) rather than leaving it blank. Creation screens are normal NGUI cursor+click (BoxColliders + UICamera → but UICamera nav reads raw UnityEngine.Input, see §9). `Time.timeScale` is force-managed during creation (`UICharacterCreationEnumSetter.cs:643-646`).
-Conquest/backstory: `UICharacterCreationConquestSummary.cs`, `UIConquest*` (the "Conquest" pre-game choices).
-**Verdict:** Detect creation mode via `UICharacterCreationManager.Instance` non-null (and/or active scene `== "LifePath"`). Driven by normal virtual cursor+click. Whether a typed name is mandatory: name is set via `UICharacterCreationNameSetter` — inspect that file for a default/required flag; a default name is applied so a game can be started without manual text entry, but confirm by reading `UICharacterCreationNameSetter.cs` before relying on it.
+## 10. Character creation & level-up UI — `UICharacterCreationManager.cs` [HERE] + ~55 `UICharacterCreation*` files
+
+`public static UICharacterCreationManager Instance => s_Instance;` — non-null only while the creation screen exists → **mode detection: `UICharacterCreationManager.Instance != null`** (used exactly so in `GameState.Update()` L716). New-game flow loads scene `"LifePath"` (§11). Level-up shares `UICharacterCreation*` widgets (`UICharacterCreationController/Stage/NavControl`).
+Name entry: `UICharacterCreationNameSetter.cs` [HERE] drives the name field via `base.Owner.Character.Name`, with `IsValidName(string)` validation and an `ErrorIndicator` shown when the name is empty/invalid (L120). **A valid non-empty name appears required to advance** — a headless flow must set `Character.Name` to a valid string programmatically. Creation screens are normal NGUI cursor+click (BoxColliders + UICamera → raw UnityEngine.Input, see §9). `Time.timeScale` force-managed during creation (`UICharacterCreationEnumSetter.cs:643-646`).
 
 ---
 
-## 11. New game / main menu
+## 11. New game / main menu — `UIMainMenuManager.cs`, `UINewGameScreen.cs` [HERE]
 
-### Main menu — `UIMainMenuManager.cs` [HERE] (MonoBehaviour, global namespace)
+Main menu: `UIMainMenuManager.Instance` (static), `NewGameScreen` field, `MenuActive/MenuLocked`, `static StartingGame()`; scene `"MainMenu"`. New Game button → `UIMainMenuManager.Instance.NewGameScreen.OpenScreen()` (`UIMainMenuClickHandler.cs` L148).
 ```csharp
-public static UIMainMenuManager Instance => s_instance;
-public UINewGameScreen NewGameScreen;            // field
-public bool MenuActive { get; set; }  MenuLocked { get; set; }
-public static void StartingGame();               // plays new-game stinger, fades music
-public static bool s_performCleanup;  static bool s_ReturningToMainMenuFromError;
+public void UINewGameScreen.OpenScreen();
+public void UINewGameScreen.OnAcceptClick(GameObject go);   // reads difficulty/ToI/Expert/Legacy → GameState.Mode, then StartIntro()
+private void StartIntro();      // SDK.GameState.NewGame = true; GameState.Instance.PlaythroughGUID = Guid.NewGuid();  [PlaythroughGUID verified: SDK/GameState.cs L118]
+                                //   UIMainMenuManager.StartingGame(); UILoadingScreen.Show(Character_Creation, → SceneManager.LoadScene("LifePath"))
 ```
-Main-menu scene name = `"MainMenu"`. Menu buttons handled by `UIMainMenuClickHandler.cs` — the **New Game** button calls `UIMainMenuManager.Instance.NewGameScreen.OpenScreen()` (L148).
-
-### Start a new game — `UINewGameScreen.cs` [HERE]
-```csharp
-public void OpenScreen();               // shows difficulty/mode panel
-public void OnAcceptClick(GameObject go);   // reads difficulty/ToI/Expert/Legacy -> GameState.Mode, then StartIntro()
-private void StartIntro();              // sets SDK.GameState.NewGame=true; GameState.Instance.PlaythroughGUID=Guid.NewGuid();
-                                        //   UIMainMenuManager.StartingGame(); then UILoadingScreen.Show(Character_Creation, HandleNewGameLoadingScreenShowing)
-private void HandleNewGameLoadingScreenShowing();  // => SceneManager.LoadScene("LifePath", Single)
-```
-**Programmatic new game:** either (a) `UIMainMenuManager.Instance.NewGameScreen.OpenScreen()` then `.OnAcceptClick(null)`, or (b) replicate `StartIntro`: set `SDK.GameState.NewGame = true`, `Game.GameState.Instance.NewGamePlusIteration = 0`, `Game.GameState.Instance.PlaythroughGUID = Guid.NewGuid()`, then `SceneManager.LoadScene("LifePath")`. Difficulty/mode set on `Game.GameState.Mode` (GameMode) before load.
-
-### Return to main menu (episode reset) — `Game/GameState.cs` [HERE]
-```csharp
-public static void GameState.LoadMainMenu(bool fadeOut);   // clean path (Trial-of-Iron save if needed, fade, SceneManager.LoadScene("MainMenu"))
-public override void ReturnToMainMenuFromError();          // error path
-```
-**Verdict:** New game = drive `UINewGameScreen` or replicate `StartIntro` + `LoadScene("LifePath")`. Return to menu = `Game.GameState.LoadMainMenu(true/false)`. `UIMainMenuManager.Instance` gates menu state.
+**Programmatic new game:** drive `OpenScreen()` + `OnAcceptClick(null)`, or replicate `StartIntro` (set `SDK.GameState.NewGame = true`, `Game.GameState.Instance.NewGamePlusIteration = 0`, `PlaythroughGUID = Guid.NewGuid()`, then `SceneManager.LoadScene("LifePath")`). Set `Game.GameState.Mode` difficulty first.
+**Return to main menu:** `Game.GameState.LoadMainMenu(bool fadeOut)` [HERE]; error path `ReturnToMainMenuFromError()`.
 
 ---
 
-## 12. Debug console  — `Game/CommandLine.cs` [HERE] : `SDK.CommandLine`  +  `UICommandLine.cs` / `UIConsole*` [HERE]
+## 12. Debug console — `SDK.CommandLine.RunCommand` [verified, firstpass/SDK/CommandLine.cs L295-478]
 
-**Command dispatcher / programmatic invocation:**
 ```csharp
-CommandLine.RunCommand(string text);   // [SDK.CommandLine, static] <-- PARSES + DISPATCHES a console command line.
-                                        //   Called by UICommandLine.OnSubmit() with the typed string.
+public static void RunCommand(string command);   // namespace SDK — VERIFIED (public static void)
 ```
-`UICommandLine.cs` [HERE] is the input box: opened via `GameInput.GetControlDown(MappedControl.TOGGLE_CONSOLE, handle:true)`; on submit calls `CommandLine.RunCommand(text)`. **To run any console command programmatically (e.g. `"reputationaddpoints SK_GravenAshe favor 8"`), call `SDK.CommandLine.RunCommand("<command args>")`.** `reputationaddpoints` is implemented in **`Scripts.cs` [HERE]** (the script-function library that console commands and dialogue scripts share) — confirmed the only match for that token. So RunCommand resolves the command name to the `Scripts.cs` method by reflection. You can also call the `Scripts.cs` rep method directly if you locate its exact signature there.
+Verified behavior: splits on `,` into multiple commands; each split on spaces (arg0 = method name, case-insensitive). Reflects over **`Game.CommandLine` public statics always**; additionally over **`Game.Scripts` public statics ONLY when `SDK.GameState.CheatsEnabled`**. Methods carrying `[Cheat]` also require CheatsEnabled. Matches on name + exact param count; coerces params (enums via `Enum.Parse`, `Guid` with GameObject-name fallback, quest/conversation browser lookups, `Convert.ChangeType` for value types). Errors → `Console.AddMessage(..., Color.yellow)`.
+⇒ **`reputationaddpoints` lives in `Game.Scripts` (Assembly-CSharp/Scripts.cs — verified sole match) ⇒ requires `SDK.GameState.CheatsEnabled = true`** (set the property directly, or call `Game.CommandLine.IRoll20s()` which also disables achievements).
 
-**`Game.CommandLine` static command methods** (many tagged `[Cheat]`) — directly callable, examples [HERE]:
-`ResetParty()`, `Damage(string)`, `Difficulty(string)`, `ChallengeMode(string)`, `AddItem(string,string)`, `AttributeScore(name,attr,val)`, `Skill(name,skill,val)`, `AddAbility/RemoveAbility`, `SetTime(string)`, `AdvanceDay()`, `Edict(tag)`/`RemoveEdict()`/`LearnEdictPackage(tag)`, `AddBelief/SpendBelief`, `AddCompanion(name)`/`AddAllCompanions()`, `SpawnPrefabAtMouse(...)`, `UnlockAllMaps()`, `UnlockBestiary()`, `ManageParty()`, `EvadeAll()`.
-**Cheat toggle:** `public new static void IRoll20s()` [HERE] — flips `SDK.GameState.CheatsEnabled` (disables achievements). Many `[Cheat]` commands require cheats enabled.
+Directly-callable `Game.CommandLine` statics [HERE], many `[Cheat]`-tagged: `ResetParty()`, `Damage(string)`, `Difficulty(string)`, `AddItem(string,string)`, `AttributeScore/Skill(name,which,val)`, `AddAbility/RemoveAbility`, `SetTime(string)`, `AdvanceDay()`, `Edict(tag)/RemoveEdict()/LearnEdictPackage(tag)`, `AddBelief/SpendBelief(string)`, `AddCompanion(name)/AddAllCompanions()`, `SpawnPrefabAtMouse/AtPoint(...)`, `UnlockAllMaps()`, `SetMaxFPS(int)`, `Flash(float)`.
 
-**Console output** — `SDK.Console` [SDK] (unqualified `Console`): `Console.AddMessage(string)`, `AddMessage(string, Color)`, `AddMessage(string, Console.ConsoleState)`, `AddMessage(string title, string body, Color)`; `Console.Format(fmt, args...)` -> string; `Console.ConsoleState` enum { DIALOG_BIG, DEBUG, ... }; `Console.Instance`. UI: `UIConsole.cs`, `UIConsoleEntry.cs`, `UIConsoleText.cs` [HERE].
-
-**Verdict:** Invoke any command via `SDK.CommandLine.RunCommand("...")` (single reflection call). For typed helpers, call `Game.CommandLine.<Method>()` statics directly. Enable cheats with `Game.CommandLine.IRoll20s()` (or set `SDK.GameState.CheatsEnabled = true`).
+**Console output [verified, firstpass/Console.cs]:**
+```csharp
+public static Console Instance { get; private set; }                          // L187
+public static void AddMessage(string msg);                                    // L298
+public static void AddMessage(string msg, ConsoleState mode);                 // L288
+public static void AddMessage(string msg, Color color);                       // L308
+public static void AddMessage(string msg, Color color, ConsoleState mode);    // L293
+public static void AddMessage(string msg, string verbose);                    // L303
+public static void AddMessage(string msg, string verbose, Color color);       // L313
+public static string Format(string fstring, params object[] parameters);      // L331
+public enum ConsoleState { ... }   // L10 (DIALOG_BIG, DEBUG, ... per usage)
+```
+UI console box: `UICommandLine.cs` [HERE] → `CommandLine.RunCommand(text)` on submit; toggled by `MappedControl.TOGGLE_CONSOLE`.
 
 ---
 
-## Extras (incidental findings)
+## Extras
 
-### Edict / timer mechanics — `Game/EdictManager.cs` [HERE], `Game/Edict.cs` [HERE]
+### Edict / timer mechanics [HERE — `Game/EdictManager.cs`, `Game/Edict.cs`]
+`EdictManager.Instance` (public static field), `GetActiveEdict([Region])`, `GetEdictPackageByTag/GetEdictByTag(string)`, `ActivateEdictPackage(Region|string, EdictPackage|string)`, `DeactivateEdict(Region|string)`, `LearnEdictPackage(string|EdictPackage)`, `IsEdictPackageActive(string)`; static events `EdictPreActivated/EdictPostActivated/EdictPreDeactivated/EdictPostDeactivated` (EventHandler). `Edict`: `.Tag`, `.EdictNameText/Description/BreakText`, `Activate()/Deactivate()`, `getBreakVar()` (reads GlobalVariables). Countdown = WorldTime date math + globals (§7).
+
+### Area transition events [verified]
+`SDK.GameState.LevelUnload/LevelLoadedEarly/LevelLoaded/LevelLoadedLate/Resting` static events (SDK/GameState.cs L166-174). `ScriptEvent.BroadcastEvent(ScriptEvent.ScriptEvents.OnSceneExited/OnLevelLoaded)`. `Game.GameState.ChangeLevel(...)` initiates transitions.
+
+### Party enumeration — `SDK.PartyMemberAI` [verified, firstpass/SDK/PartyMemberAI.cs]
 ```csharp
-EdictManager.Instance;                                  // static field (MonoBehaviour)
-Edict GetActiveEdict();  Edict GetActiveEdict(Region);  // active edict for current/given region
-EdictPackage GetEdictPackageByTag(string);  Edict GetEdictByTag(string);
-void ActivateEdictPackage(Region, EdictPackage);  ActivateEdictPackage(string regionTag, string edictPackageTag);
-void DeactivateEdict(Region/string);   void LearnEdictPackage(string/EdictPackage);
-bool IsEdictPackageActive(string tag);  bool IsEdictPackageKnown(...);
-static event EventHandler EdictPreActivated / EdictPostActivated / EdictPreDeactivated / EdictPostDeactivated;  // subscribe for edict events
+public static PartyMemberAI[] PartyMembers;                    // L33 — public static field (null slots = empty)
+public static List<PartyMemberAI> OnlyPrimaryPartyMembers { get; }   // L154
+public static GameObject[] SelectedPartyMembers { get; }       // L383 — static property
+public static int NumPrimaryPartyMembers { get; }  NextAvailablePrimarySlot { get; }  // L174/395
+public static int MAX_PARTY_MEMBERS => (MAX_SECONDARY_SLOTS + 1) * MAX_PRIMARY_PARTY_MEMBERS;   // L104 (Game sets 4+4 → 20 slots incl. summons)
+public static event EventHandler PartyMembersChanged;          // L426
+public static event EventHandler OnAnySelectionChanged;        // L428  <-- selection-change event
+public static event Action OnPartyOrderChanged;                // L432
+public virtual bool Selected { get; set; }                     // L260 — per-member selection (writes its SelectedPartyMembers slot)
+public bool DragSelected { get; set; }                         // L297
+public static int GetSelectedLeaderSlot();  public static int NumSelectedMembers();   // L827/839
+public static void EnsurePartyMemberSelected();                // L639
+// Game layer [HERE]: static AddToActiveParty(GameObject, bool fromScript); RemoveFromActiveParty(PartyMemberAI); PopAllStates(); Reset();
+//                    instance: Slot, AssignedSlot, IsActiveInParty, IsAdventurer, ReputationFaction (FactionName)
 ```
-`Edict` [HERE]: `.Tag`, `.EdictNameText/Description/BreakText` (DatabaseString), `Activate()`/`Deactivate()`, `getBreakVar()` (reads GlobalVariables). "Day of Swords" is a scripted date/global, tracked via `WorldTime` + `GlobalVariables` + `AchievementTracker.TrackedAchievementStat.HasDayOfSwordsArrive...`; no dedicated countdown class.
 
-### Area transition events
-`SDK.GameState.LevelUnload` / `LevelLoaded` (EventHandler events, subscribed in EdictManager). `SDK.GameState.OnLevelLoadedEarly/OnLevelLoaded/OnLevelLoadedLate(levelName, EventArgs)`. `ScriptEvent.BroadcastEvent(ScriptEvent.ScriptEvents.OnSceneExited / OnLevelLoaded)`. `GameState.ChangeLevel(MapData/MapType/string)` initiates transitions.
-
-### Party enumeration — `SDK.PartyMemberAI` [SDK] statics (used everywhere) + `Game/PartyMemberAI.cs` [HERE]
+### Per-character health [verified]
 ```csharp
-static SDK.PartyMemberAI[] PartyMembers;              // fixed array (MAX_PARTY_MEMBERS), null slots => empty
-static List<SDK.PartyMemberAI> OnlyPrimaryPartyMembers;   // active primary members
-static GameObject[] SelectedPartyMembers;             // currently player-selected (for commands)
-static int MAX_PARTY_MEMBERS; MAX_PRIMARY_PARTY_MEMBERS=4; MAX_SECONDARY_SLOTS=4;
-static int NextAvailablePrimarySlot;
-static void PartyMemberAI.AddToActiveParty(GameObject, bool fromScript);   // [HERE]
-static void PartyMemberAI.RemoveFromActiveParty(PartyMemberAI);            // [HERE]
-static void PartyMemberAI.PopAllStates();  static void Reset();
-bool  partyMember.Selected { get; set; }              // [SDK] selection state (per member)
-int   .Slot / .AssignedSlot;  bool .IsActiveInParty;  bool .IsAdventurer;   // [HERE]
-FactionName .ReputationFaction;                        // [HERE] links companion to Reputation
+// SDK.Health (firstpass/SDK/Health.cs):
+public virtual float CurrentHealth { get; set; }               // L57
+public abstract bool Dead { get; set; }                        // L81
+public abstract bool ShowDead { get; }                         // L85
+public abstract void ApplyHealthChangeDirectly(float amount, bool applyIfDead);   // L235 (+3 overloads: healer GameObject, StatusEffect, bool showInConsole)
+// MaxHealth is on Game.Health (Assembly-CSharp/Game/Health.cs L380): public float MaxHealth { get; }
+//   plus PreWoundsMaxHealth (L364). SDK.CharacterStats: public float BaseMaxHealth = 100f (field, L67); Game.CharacterStats: DerivedMaxHealth.
+// Game.Health extras [HERE]: static ResetCharacter(GameObject); static bool BloodyMess; DeathStatusType { INVALID=-1, KO, Death };
+//   OnyxEvent OnWouldHaveKilled / OnPartyWouldHaveKilled.
 ```
-`Game.Player : PartyMemberAI`-ish uses `IsSelected` (Player.cs). Iterate `SDK.PartyMemberAI.PartyMembers` (skip nulls) for the party; `SelectedPartyMembers` for current selection.
+Get HP: `go.GetComponent<Game.Health>().CurrentHealth / .MaxHealth`. Position = `component.transform.position`. Player stats: `GameState.s_playerCharacter.Character` (Game.CharacterStats: `Level`, `ActiveAbilities`, `Name()`, static `NameColored(GameObject)`, skill props, `AttributeScoreType`/`SkillType` enums, `SetBaseAttributeScore`).
 
-### Per-character health — `Game/Health.cs` [HERE] : `SDK.Health`  (RequireComponent CharacterStats)
-```csharp
-float base.CurrentHealth { get; set; }   // [SDK] current HP (Health is the HP component)
-float base.MaxHealth      { get; }        // [SDK] max HP
-// Game-layer: m_stats (CharacterStats), DerivedMaxHealth via CharacterStats.DerivedMaxHealth
-enum Health.DeathStatusType { INVALID=-1, KO, Death };
-static bool Health.BloodyMess;  static void Health.ResetCharacter(GameObject);
-void ApplyHealthChangeDirectly(float delta, bool applyIfDead);
-OnyxEvent<GameObject,GameEventArgs> OnWouldHaveKilled / OnPartyWouldHaveKilled;
-```
-Get HP: `go.GetComponent<Game.Health>().CurrentHealth / .MaxHealth`.
-
-### CharacterStats — `Game/CharacterStats.cs` [HERE] : `SDK.CharacterStats`
-`GameState.s_playerCharacter.Character` is the player's CharacterStats. Members seen: `DerivedMaxHealth`, `Level`, `ActiveAbilities` (List<GenericAbility>), `Name()`, `NameColored(GameObject)` (static), `DisplayName`, `Gender`, `SetBaseAttributeScore(AttributeScoreType,int)`, skill props (`StealthSkill`, `LoreSkill`, ... `MechanicsSkill`), enums `AttributeScoreType`, `SkillType`, `SkillCategory`. Static `SDK.CharacterStats.Name(GameObject)`, `GetGender(...)`.
-
-### Position / selection
-Position = standard `component.transform.position` (Unity). Selection = `PartyMemberAI.Selected` / `SelectedPartyMembers` (above). Under-cursor character = `SDK.GameCursor.CharacterUnderCursor` (§9).
+### Networking check (TcpListener long-shot) — RESOLVED: nothing unusual in game code
+Searched both assemblies for `TcpListener` / `System.Net.Sockets` / raw `Socket` usage: **zero hits** in game code. The only network-adjacent code is Steamworks (`firstpass/Steamworks/SteamNetworking.cs`, `SteamGameServerNetworking.cs` — Steam P2P API over the Steam client, not OS sockets) and one `using System.Net` in `Game/FeedProvider_Paradox.cs` (HTTP news feed). No socket hooking, no interception, nothing that would make `TcpListener.Start()` succeed without a real bind. If a plugin's listener port is invisible in netstat, suspect the **runtime/environment, not the game**: Unity 5.4 ships an ancient Mono 2.x-era class library whose `TcpListener` can end up bound IPv6-only (check `netstat -ano` for `[::]:port`, not just `0.0.0.0:port`), or the listener was GC'd/closed. Verify from inside the process with `IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners()`, construct with explicit `new TcpListener(IPAddress.Any /* or Loopback */, port)`, and hold a strong reference.
 
 ---
 
-## Harmony targeting cheat-sheet
+## Harmony targeting cheat-sheet (all targets verified unless noted)
 | Need | Target | Kind |
 |---|---|---|
-| Combat on/off events | `SDK.GameState.OnCombatStart/OnCombatEnd` | subscribe event |
-| Read combat/loading/gameover | `SDK.GameState.InCombat/IsLoading/GameOver` | read static |
-| Area-load finished | `Game.GameState.FinalizeLevelLoad` | postfix |
-| Intercept option text | `Conversation.GetNodeText` | postfix (swap) |
-| Shuffle option order | `Conversation.GetResponseNodes` | postfix (reorder list) |
-| Which option chosen / inject choice | `UIConversationManager.PlayerInput(int)` | postfix / call |
-| Favor/wrath stream | `Game.ReputationManager.AddReputation`/`RemoveReputation` | postfix |
-| Read favor/wrath | `ReputationManager.Instance.GetReputation((int)FactionName.X).PositiveAxisValue/GoodRank` | read |
-| Quest milestones | `QuestManager.Instance.OnQuestAdvanced` / `CompleteQuest` | subscribe / postfix |
-| Global-var mutations | `SDK.GlobalVariables.SetVariable(string,int)` | postfix |
-| Inject virtual input | `SDK.GameInput.*` static getters/methods | prefix (return injected) |
-| Game speed / pause | `TimeController.Instance` props / patch timeScale setter | set / prefix |
-| Save / load | `GameResources.SaveGame` / `LoadGame` | call |
-| Redirect save dir | `SDK.GameResources.SaveGamePath` getter | prefix/postfix |
-| Run console command | `SDK.CommandLine.RunCommand(string)` | call |
-| New game | `UINewGameScreen` OpenScreen/OnAcceptClick or replicate StartIntro + LoadScene("LifePath") | call |
+| Combat on/off events | `SDK.GameState.CombatStart` / `CombatEnd` (static events) | subscribe |
+| Read combat/loading/gameover/paused | `SDK.GameState.InCombat/IsLoading/GameOver/Paused` | read static |
+| Area-load finished | `Game.GameState.FinalizeLevelLoad` postfix, or `SDK.GameState.LevelLoaded` event, or `SDK.GameResources.EventLoadedSave` | postfix / subscribe |
+| Intercept option text | `Conversation.GetNodeText(FlowChartPlayer, FlowChartNode, bool, NodeTextRequestType)` | postfix (swap `__result`) |
+| Shuffle option order | `Conversation.GetResponseNodes(FlowChartPlayer)` + 2-arg overload | postfix (reorder list) |
+| Which option chosen / inject choice | `UIConversationManager.PlayerInput(int)` (private) | postfix / invoke |
+| Start a conversation | `ConversationManager.Instance.StartConversation(file, owner, DisplayMode[, disableVo])` | call |
+| Favor/wrath stream | `Game.ReputationManager.AddReputation/RemoveReputation` (5-arg overloads) | postfix |
+| Read favor/wrath | `GetReputation((int)FactionName.X)` → `.PositiveAxisValue/.NegativeAxisValue/.GoodRank/.BadRank` | read |
+| Quest milestones | `QuestManager.OnQuestAdvanced/OnQuestCompleted/OnQuestFailed/OnQuestStarted` (delegate FIELDS — Delegate.Combine) or postfix `TriggerQuestEndState` | combine / postfix |
+| Global-var mutations | `GlobalVariables.SetVariable(string,int)` postfix, or postfix `QuestManager.TriggerGlobalVariableEvent(string,int)` | postfix |
+| Inject buttons/keys | `GameInput.GetMouseButtonDown/Up/GetMouseButton(int,bool)`, `GetKeyDown/Up(KeyCode,bool)`, `GetKey(KeyCode)`, `GetControlDown/Up(KeyControl,bool)`, `GetControl(KeyControl,bool,bool)`, `NumberPressed` getter | prefix (skip, set `__result`) |
+| Inject cursor/world-pick | postfix `GameInput.Update` then set `GameCursor.WorldPickPosition` / `GameCursor.CharacterUnderCursor` (both settable); prefix `GameInput.MousePosition`/`GlobalMousePosition` getters | postfix + prefix |
+| NGUI menu input | `UICamera.onCustomInput` static delegate; raw `UnityEngine.Input` (UICamera bypasses GameInput) | assign / low-level |
+| Game speed (arbitrary) | `TimeController.Instance.Flash(float)` (public), or set `NormalTime` field / private `m_TimeScale`; final authority = postfix private `TimeController.UpdateTimeScale()` | call / reflection / postfix |
+| Pause | `TimeController.Instance.Paused` / `SafePaused` setters; `PauseChanged` event | set / subscribe |
+| Save / load | `Game.GameResources.SaveGame(string[,string,bool])` / `LoadGame(string)` (static) | call |
+| Redirect save dir | prefix `SDK.GameResources.SaveGamePath` getter **+ rewrite `PersistenceManager.s_tempSavePath/s_mobileObjPath/s_oldTempSavePath` public static fields + patch `GlobalVariables.Write/ReadGlobalsToSaveGame`** (hardcoded persistentDataPath/CurrentGame) | prefix + field writes |
+| Run console command | `SDK.CommandLine.RunCommand(string)` — set `SDK.GameState.CheatsEnabled = true` first for `[Cheat]`/`Game.Scripts` commands (incl. `reputationaddpoints`) | call |
+| New game | `UINewGameScreen.OpenScreen`/`OnAcceptClick`, or replicate `StartIntro` + `LoadScene("LifePath")` | call |
 | To main menu | `Game.GameState.LoadMainMenu(bool)` | call |
 | In char-creation? | `UICharacterCreationManager.Instance != null` | read |
+| Party / selection | `SDK.PartyMemberAI.PartyMembers` (field), `SelectedPartyMembers`, `OnAnySelectionChanged` event, `Selected` prop | read / subscribe |
+| HP | `go.GetComponent<Game.Health>().CurrentHealth` (SDK virtual) / `.MaxHealth` (Game layer) | read |
 
-## Open items to confirm against `Assembly-CSharp-firstpass.dll` (SDK)
-- Exact signatures/visibility of: `SDK.GlobalVariables.GetVariable/SetVariable`, all `SDK.GameInput` members, `SDK.TimeController` timeScale-writing property, `SDK.Console.AddMessage` overloads, `SDK.CommandLine.RunCommand` + how `reputationaddpoints` is registered, `SDK.Reputation.PositiveAxisValue/GoodRank` getters, `SDK.GameResources.SaveGamePath` getter.
-- `UICamera.cs` (present here) static input-override delegates (`onCustomInput` / `GetKeyDown`) if feeding NGUI directly.
-- `UICharacterCreationNameSetter.cs` — whether a default name is auto-applied (name mandatory?).
+## Remaining unverified (OEIFormats.dll only)
+`FlowChartNode` / `PlayerResponseNode` / `DialogueNode` / `ScriptNode` member details (`NodeID`, `NodeType`, `Links`, `Persistence`, `Conditionals`, `HideSpeaker`, `ClassExtender`) are usage-derived from verified call-sites — decompile `OEIFormats.dll` only if a patch must target them directly (none of the planned hooks do; all planned hooks target Conversation/ConversationManager/UIConversationManager/GameInput, which are fully verified).
