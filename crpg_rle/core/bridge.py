@@ -1,4 +1,4 @@
-"""TCP IPC bridge client for the Tyranny BepInEx mod.
+"""TCP IPC bridge client for the game-side mod.
 
 The game (C#/BepInEx) runs a TCP *server*; Python connects as the *client*.
 

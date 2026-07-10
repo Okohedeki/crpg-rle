@@ -74,7 +74,7 @@ class GameProcess:
             "0",
         ]
         if self.log_dir is not None:
-            log_path = os.path.join(self.log_dir, f"tyranny_{self.instance_id}.log")
+            log_path = os.path.join(self.log_dir, f"game_{self.instance_id}.log")
             args += ["-logFile", log_path]
         args += self.extra_args
 
