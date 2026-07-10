@@ -58,6 +58,6 @@ def test_full_env_episode():
                 break
 
         assert reward_channels_present
-        assert "creation_conquest" in env.adapter.milestones.fired  # m0 gate fired
+        assert "m0" in env.adapter.milestones.fired  # creation/Conquest gate fired
     finally:
         env.close()
