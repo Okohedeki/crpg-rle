@@ -48,10 +48,13 @@ class TyrannyConfig:
 
     edict_fail_days: float = 0.0
 
-    # Episode start. "creation": env scripts nav, agent makes build decisions.
-    # "act1_save": restore a save (debug/curriculum).
-    start_mode: str = "creation"
-    save_start: str | None = None
+    # Episode start. The character build is predefined infrastructure, not part
+    # of the agent's problem: episodes reset by loading a pre-made Act-1-start
+    # save (~5s, proven). "creation" reaches the creation wizard for tooling /
+    # save-bank generation only. save_start names a .savegame in the game's
+    # save dir; a future save-bank manifest allows seeded sampling of builds.
+    start_mode: str = "act1_save"
+    save_start: str | None = "RL1 d3b051952d6742c3b0d46e413aa0e841 .savegame"
 
     max_party: int = 6
     max_steps: int = 20000
