@@ -46,6 +46,7 @@ namespace CRPGBridge
             });
             _ipc.Register("load", HandleLoad);
             _ipc.Register("console", HandleConsole);
+            _ipc.Register("diag_asm", HandleDiagAsm);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -159,6 +160,33 @@ namespace CRPGBridge
             return new JObject();
         }
 
+        /// <summary>diag_asm: enumerate loaded assemblies (duplicate-copy detection).</summary>
+        private JObject HandleDiagAsm(JObject req)
+        {
+            var arr = new JArray();
+            foreach (System.Reflection.Assembly asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                string name = asm.GetName().Name;
+                if (name.IndexOf("Assembly-CSharp", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("Polenter", StringComparison.OrdinalIgnoreCase) < 0 &&
+                    name.IndexOf("OEIFormats", StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+                string loc;
+                try { loc = asm.Location; } catch { loc = "<dynamic>"; }
+                arr.Add(new JObject { ["name"] = name, ["location"] = loc, ["hash"] = asm.GetHashCode() });
+            }
+            // Where does the serializer's property type live, seen from our context?
+            Type complexProp = AccessTools.TypeByName("Polenter.Serialization.Core.ComplexProperty");
+            return new JObject
+            {
+                ["assemblies"] = arr,
+                ["complex_property_asm"] = complexProp != null ? complexProp.Assembly.GetName().Name + " #" + complexProp.Assembly.GetHashCode() : "<not found>",
+                ["game_utils_valid"] = SDK.GameUtilities.InstanceIsValid,
+                ["game_cursor"] = SDK.GameCursor.Instance != null,
+                ["scene"] = SDK.GameState.LoadedLevelName ?? ""
+            };
+        }
+
         private JObject HandleDiagInput(JObject req)
         {
             Vector3 raw = Input.mousePosition;          // goes through the icall patch when active
@@ -170,6 +198,8 @@ namespace CRPGBridge
                 ["failed"] = new JArray(InputInjector.PatchFailed.ToArray()),
                 ["mouse_raw"] = new JArray(raw.x, raw.y),
                 ["mouse_gameinput"] = new JArray(viaGameInput.x, viaGameInput.y),
+                ["world_pick"] = new JArray(GameInput.WorldMousePosition.x, GameInput.WorldMousePosition.y, GameInput.WorldMousePosition.z),
+                ["world_pick_on_nav"] = GameInput.WorldMousePositionOnNav,
                 ["screen"] = new JArray(Screen.width, Screen.height)
             };
         }

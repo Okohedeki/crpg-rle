@@ -117,6 +117,7 @@ namespace CRPGBridge
             {
                 response["ok"] = false;
                 response["error"] = ex.GetType().Name + ": " + ex.Message;
+                response["trace"] = ex.ToString();
                 return response;
             }
         }

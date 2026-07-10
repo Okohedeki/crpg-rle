@@ -184,11 +184,24 @@ namespace CRPGBridge
             return false;
         }
 
+        // The engine reads mouse buttons through BOTH UnityEngine.Input.GetMouseButton*(int)
+        // AND UnityEngine.Input.GetKey*(KeyCode.Mouse0/1/2) — the latter because mapped
+        // controls (MOVE = right-click, SELECT = left-click) resolve to KeyControl.KeyCode.
+        // So the KeyCode.MouseN path must mirror the button state, or clicks never move the party.
+        private static int MouseButtonForKey(KeyCode key)
+        {
+            if (key == KeyCode.Mouse0) return 0;
+            if (key == KeyCode.Mouse1) return 1;
+            if (key == KeyCode.Mouse2) return 2;
+            return -1;
+        }
+
         private static bool PreGetKey(KeyCode key, ref bool __result)
         {
             if (!Active) return true;
             Advance();
-            __result = _keyHeld.Contains(key);
+            int mb = MouseButtonForKey(key);
+            __result = mb >= 0 ? _btnHeld[mb] : _keyHeld.Contains(key);
             return false;
         }
 
@@ -196,7 +209,8 @@ namespace CRPGBridge
         {
             if (!Active) return true;
             Advance();
-            __result = _keyDown.Contains(key);
+            int mb = MouseButtonForKey(key);
+            __result = mb >= 0 ? _btnDown[mb] : _keyDown.Contains(key);
             return false;
         }
 
@@ -204,7 +218,8 @@ namespace CRPGBridge
         {
             if (!Active) return true;
             Advance();
-            __result = _keyUp.Contains(key);
+            int mb = MouseButtonForKey(key);
+            __result = mb >= 0 ? _btnUp[mb] : _keyUp.Contains(key);
             return false;
         }
 
