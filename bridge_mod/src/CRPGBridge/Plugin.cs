@@ -31,6 +31,9 @@ namespace CRPGBridge
             Hooks.EventHooks.Log = s => Logger.LogInfo("[events] " + s);
             Hooks.EventHooks.Install(_harmony);
 
+            DialogueInterceptor.Log = s => Logger.LogInfo("[dialogue] " + s);
+            DialogueInterceptor.Apply(_harmony);
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
@@ -51,6 +54,7 @@ namespace CRPGBridge
             _ipc.Register("speed", HandleSpeed);
             _ipc.Register("new_game", HandleNewGame);
             _ipc.Register("to_menu", HandleToMenu);
+            _ipc.Register("dialogue", HandleDialogue);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -89,6 +93,27 @@ namespace CRPGBridge
         {
             Game.GameState.LoadMainMenu(false);
             return new JObject();
+        }
+
+        /// <summary>dialogue: {active, seed, corpus_path?} — arm the per-episode
+        /// randomizer (paraphrase swap + option shuffle). Loads corpus once.</summary>
+        private JObject HandleDialogue(JObject req)
+        {
+            if (req["corpus_path"] != null && !DialogueInterceptor.Corpus.Loaded)
+            {
+                string path = req["corpus_path"].Value<string>();
+                bool ok = DialogueInterceptor.Corpus.Load(path);
+                Logger.LogInfo(string.Format("[dialogue] corpus load {0}: {1} options, version '{2}'",
+                    ok ? "ok" : "FAILED", DialogueInterceptor.Corpus.Count, DialogueInterceptor.Corpus.Version));
+            }
+            if (req["seed"] != null) DialogueInterceptor.Seed = req["seed"].Value<ulong>();
+            if (req["active"] != null) DialogueInterceptor.Active = req["active"].Value<bool>();
+            return new JObject
+            {
+                ["active"] = DialogueInterceptor.Active,
+                ["corpus_loaded"] = DialogueInterceptor.Corpus.Loaded,
+                ["corpus_count"] = DialogueInterceptor.Corpus.Count
+            };
         }
 
         private JObject HandleHandshake(JObject req)
