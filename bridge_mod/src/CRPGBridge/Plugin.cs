@@ -48,6 +48,9 @@ namespace CRPGBridge
             _ipc.Register("console", HandleConsole);
             _ipc.Register("diag_asm", HandleDiagAsm);
             _ipc.Register("start_conv", HandleStartConv);
+            _ipc.Register("speed", HandleSpeed);
+            _ipc.Register("new_game", HandleNewGame);
+            _ipc.Register("to_menu", HandleToMenu);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -58,7 +61,34 @@ namespace CRPGBridge
         private void Update()
         {
             Hooks.EventHooks.Tick();
+            SpeedController.Tick();
             if (_ipc != null) _ipc.Pump();
+        }
+
+        private JObject HandleSpeed(JObject req)
+        {
+            if (req["time_scale"] != null) SpeedController.SetTimeScale(req["time_scale"].Value<float>());
+            if (req["uncap_fps"] != null) SpeedController.UncapFps(req["uncap_fps"].Value<bool>());
+            return new JObject { ["time_scale"] = SpeedController.Target };
+        }
+
+        /// <summary>new_game: start a fresh playthrough into character creation
+        /// (LifePath scene). Agent then drives creation via input.</summary>
+        private JObject HandleNewGame(JObject req)
+        {
+            if (Game.GameState.Instance != null)
+                Game.GameState.Instance.PlaythroughGUID = System.Guid.NewGuid();
+            SDK.GameState.NewGame = true;
+            UnityEngine.SceneManagement.SceneManager.LoadScene("LifePath",
+                UnityEngine.SceneManagement.LoadSceneMode.Single);
+            return new JObject { ["started"] = true };
+        }
+
+        /// <summary>to_menu: return to the main menu (for a mid-episode reset).</summary>
+        private JObject HandleToMenu(JObject req)
+        {
+            Game.GameState.LoadMainMenu(false);
+            return new JObject();
         }
 
         private JObject HandleHandshake(JObject req)
