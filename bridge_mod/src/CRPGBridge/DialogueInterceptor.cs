@@ -74,10 +74,22 @@ namespace CRPGBridge
         private static int NodeId(object node)
         {
             if (node == null) return -1;
-            FieldInfo f = AccessTools.Field(node.GetType(), "NodeID");
-            if (f == null) return -1;
-            try { return (int)f.GetValue(node); }
-            catch { return -1; }
+            try
+            {
+                // NodeID may be a property or a field, on the type or a base type.
+                PropertyInfo p = AccessTools.Property(node.GetType(), "NodeID");
+                if (p != null) return (int)p.GetValue(node, null);
+                FieldInfo f = AccessTools.Field(node.GetType(), "NodeID");
+                if (f != null) return (int)f.GetValue(node);
+                // Last resort: reflect over the whole hierarchy for a member named NodeID.
+                for (Type t = node.GetType(); t != null; t = t.BaseType)
+                {
+                    FieldInfo bf = t.GetField("NodeID", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    if (bf != null) return (int)bf.GetValue(node);
+                }
+            }
+            catch { }
+            return -1;
         }
 
         // Use untyped __args to avoid coupling to OEIFormats types.
