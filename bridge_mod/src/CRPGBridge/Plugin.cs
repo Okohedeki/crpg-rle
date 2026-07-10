@@ -121,10 +121,15 @@ namespace CRPGBridge
                 case "quick_start": QuickStartTemplate(mgr, req["name"] != null ? req["name"].Value<string>() : "Agent"); break;
                 case "set_name": SetCreationName(mgr, req["name"] != null ? req["name"].Value<string>() : "Agent"); break;
                 case "complete":
-                    if (mgr.IsCharacterCreationReadyForCompletion())
-                        mgr.HandleCharacterCreationComplete();
-                    else
+                    if (!mgr.IsCharacterCreationReadyForCompletion())
                         return new JObject { ["ok"] = false, ["error"] = "not ready for completion" };
+                    // NOTE: neither HandleCharacterCreationComplete nor a direct
+                    // CloseCharacterCreationOnComplete cleanly transitions when we reach
+                    // creation via LoadScene("LifePath") — Conquest/character infra is
+                    // half-initialized (ConquestLocation.ApplyReputationColor NREs). The
+                    // reliable template-build path is a pre-made Act-1-start save (see
+                    // docs/DOD.md). This call is kept for when that pipeline is finished.
+                    mgr.HandleCharacterCreationComplete();
                     break;
                 case "":
                     break;
