@@ -28,6 +28,9 @@ namespace CRPGBridge
             Logger.LogInfo(string.Format("[input] icall patches: {0} ok, {1} failed",
                 InputInjector.PatchedOk.Count, InputInjector.PatchFailed.Count));
 
+            Hooks.EventHooks.Log = s => Logger.LogInfo("[events] " + s);
+            Hooks.EventHooks.Install(_harmony);
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
@@ -36,7 +39,11 @@ namespace CRPGBridge
             _ipc.Register("input", HandleInputMode);
             _ipc.Register("act", HandleAct);
             _ipc.Register("diag_input", HandleDiagInput);
-            _ipc.Register("observe", req => new JObject { ["state"] = StateReader.Snapshot() });
+            _ipc.Register("observe", req => new JObject
+            {
+                ["state"] = StateReader.Snapshot(),
+                ["events"] = EventLog.Drain()
+            });
             _ipc.Register("load", HandleLoad);
             _ipc.Register("console", HandleConsole);
             _ipc.Start();
@@ -48,6 +55,7 @@ namespace CRPGBridge
 
         private void Update()
         {
+            Hooks.EventHooks.Tick();
             if (_ipc != null) _ipc.Pump();
         }
 
