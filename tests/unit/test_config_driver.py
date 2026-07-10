@@ -30,6 +30,66 @@ def test_on_step_noop_when_nothing_triggers():
     assert b.observe_calls == 0
 
 
+class FakeLevelUpBridge:
+    """Simulates the level-up ops: one stage offering skills + an ability, then close."""
+
+    def __init__(self):
+        self.calls = []
+        self._stage = 0
+
+    def request(self, op, **kw):
+        self.calls.append((op, kw))
+        if op == "levelup_begin":
+            self._stage = 0
+            return {"open": True, "stage": 0, "target_level": kw["slot"] + 100}
+        if op == "levelup_options":
+            if self._stage == 0:
+                return {"kind": "build", "options": [{"i": 0, "label": "Abl_Cleave"}],
+                        "skills": [{"skill": "Dodge", "adjustment": 1}]}
+            return {"options": [], "skills": []}
+        if op == "levelup_skill":
+            return {"skill": kw["skill"], "applied": kw["delta"]}
+        if op == "levelup_choose":
+            return {"chosen": "ability"}
+        if op == "levelup_advance":
+            self._stage += 1
+            return {"open": self._stage < 2}  # closes after 2 advances
+        return {"ok": True}
+
+    def observe(self):
+        return {"state": {"level_up": False}, "events": []}
+
+
+def test_levelup_driver_applies_plan_and_finalizes():
+    d = ConfigDriver({"levelups": [{"level": 3, "skills": {"Dodge": 2},
+                                    "abilities": ["Abl_Cleave"]}]})
+    b = FakeLevelUpBridge()
+    state = {"level_up": True,
+             "level_up_detail": {"members": [{"slot": 0, "level": 2}]}}
+    reobs = d.on_step(b, state, [])
+    ops = [op for op, _ in b.calls]
+    assert "levelup_begin" in ops
+    assert ("levelup_skill", {"skill": "Dodge", "delta": 2}) in b.calls
+    assert ("levelup_choose", {"index": 0}) in b.calls
+    assert reobs is not None  # acted → re-observed
+    # a second identical step does not re-drive the same (slot, level)
+    b.calls.clear()
+    assert d.on_step(b, state, []) is None
+    assert not any(op == "levelup_begin" for op, _ in b.calls)
+
+
+def test_levelup_error_does_not_crash():
+    class RaisingBridge:
+        def request(self, op, **kw):
+            if op == "levelup_begin":
+                raise RuntimeError("cannot level up in combat")
+            return {}
+    d = ConfigDriver({})
+    state = {"level_up": True, "level_up_detail": {"members": [{"slot": 0, "level": 2}]}}
+    # exception is swallowed; no member handled → no re-observe
+    assert d.on_step(RaisingBridge(), state, []) is None
+
+
 def test_death_terminal_mode_never_acts():
     d = ConfigDriver({}, death_mode="terminal")
     b = FakeBridge()

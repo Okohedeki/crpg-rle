@@ -17,7 +17,9 @@ state/events), or ``None`` when it did nothing.
 """
 from __future__ import annotations
 
-from typing import Any
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigDriver:
@@ -56,9 +58,55 @@ class ConfigDriver:
     def _handle_levelup(self, bridge, state: dict) -> bool:
         if not state.get("level_up"):
             return False
-        # W4 fills the levelup_begin/options/choose/advance round-trips here,
-        # applying levelup_plan_for(target_level) through the real creation UI.
-        return False
+        detail = state.get("level_up_detail") or {}
+        members = detail.get("members") or []
+        acted = False
+        for member in members:
+            slot = int(member.get("slot", -1))
+            target_level = int(member.get("level", 0)) + 1
+            key = (slot, target_level)
+            # Attempt each (member, level) at most once per episode: if the finalize
+            # handler proves unreliable (playtest item) this prevents a retry loop.
+            if slot < 0 or key in self._levels_done:
+                continue
+            self._levels_done.add(key)
+            try:
+                begin = bridge.request("levelup_begin", slot=slot)
+                if not begin.get("open"):
+                    continue
+                self._drive_levelup(bridge, self.levelup_plan_for(target_level))
+                acted = True
+            except Exception as exc:  # a level-up hiccup must not crash the episode
+                logger.warning("level-up for slot %d failed: %s", slot, exc)
+        return acted
+
+    def _drive_levelup(self, bridge, plan: dict | None, max_stages: int = 8) -> None:
+        """Apply the predefined plan across the level-up wizard's stages, then
+        finalize. Skills go through the real skill setters; abilities are matched
+        by option label. Best-effort and bounded; the exact stage/finalize flow is
+        a live-playtest item (see LevelUpChoices.Advance)."""
+        plan = plan or {}
+        skills = dict(plan.get("skills") or {})
+        abilities = list(plan.get("abilities") or [])
+        for _ in range(max_stages):
+            opts = bridge.request("levelup_options")
+            stage_skills = {o.get("skill") for o in (opts.get("skills") or [])}
+            for name in list(skills):
+                if name in stage_skills:
+                    bridge.request("levelup_skill", skill=name, delta=skills.pop(name))
+            for option in (opts.get("options") or []):
+                label = str(option.get("label", ""))
+                match = next((a for a in abilities if a == label or a in label), None)
+                if match is not None:
+                    bridge.request("levelup_choose", index=option.get("i"))
+                    abilities.remove(match)
+            adv = bridge.request("levelup_advance", action="advance")
+            if not adv.get("open"):
+                return  # wizard closed → level-up finalized
+        try:
+            bridge.request("levelup_advance", action="complete")
+        except Exception as exc:
+            logger.warning("level-up finalize failed: %s", exc)
 
     # -------------------------------------------------------- death recovery (W5)
     def _handle_death(self, bridge, state: dict) -> bool:

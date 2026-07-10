@@ -75,6 +75,11 @@ namespace CRPGBridge
             _ipc.Register("diag_creation_ui", HandleDiagCreationUi);
             _ipc.Register("creation_options", req => CreationChoices.ListOptions());
             _ipc.Register("creation_choose", req => CreationChoices.Choose(req["index"].Value<int>()));
+            _ipc.Register("levelup_begin", req => LevelUpChoices.Begin(req["slot"].Value<int>()));
+            _ipc.Register("levelup_options", req => LevelUpChoices.ListOptions());
+            _ipc.Register("levelup_choose", req => LevelUpChoices.Choose(req["index"].Value<int>()));
+            _ipc.Register("levelup_skill", req => LevelUpChoices.ApplySkill(req["skill"].Value<string>(), req["delta"].Value<int>()));
+            _ipc.Register("levelup_advance", req => LevelUpChoices.Advance(req["action"] != null ? req["action"].Value<string>() : "advance"));
             _ipc.Register("set_global", HandleSetGlobal);
             _ipc.Register("get_global", HandleGetGlobal);
             _ipc.Register("stats", HandleStats);

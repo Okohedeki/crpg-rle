@@ -44,7 +44,61 @@ namespace CRPGBridge
             s["party"] = ReadParty();
             s["reputation"] = ReadReputation();
             s["creation"] = ReadCreation();
+
+            var levelUp = ReadLevelUp();
+            s["level_up_detail"] = levelUp;
+            // Top-level flag mode_detect reads. Suppress during combat/loading:
+            // OpenCharacterCreation (the level-up UI) is gated on !InCombat and the
+            // scripted level-up trigger must not fire mid-fight.
+            s["level_up"] = levelUp["pending"].Value<bool>()
+                && !SDK.GameState.InCombat && !SDK.GameState.IsLoading;
             return s;
+        }
+
+        /// <summary>Any party member with a bankable level or unspent points.
+        /// Level-up reuses the creation UI (UICharacterCreationManager); the
+        /// scripted config-driver applies the predefined plan when this is set.</summary>
+        private static JObject ReadLevelUp()
+        {
+            var r = new JObject { ["pending"] = false };
+            var members = new JArray();
+            bool anyPending = false;
+            try
+            {
+                SDK.PartyMemberAI[] pm = SDK.PartyMemberAI.PartyMembers;
+                if (pm != null)
+                {
+                    for (int slot = 0; slot < pm.Length; slot++)
+                    {
+                        SDK.PartyMemberAI m = pm[slot];
+                        if (m == null) continue;
+                        var cs = m.gameObject.GetComponent<Game.CharacterStats>();
+                        if (cs == null) continue;
+                        bool avail = false, unspent = false;
+                        try { avail = cs.LevelUpAvailable(); } catch { }
+                        try { unspent = cs.UnusedPoints(); } catch { }
+                        if (!avail && !unspent) continue;
+                        anyPending = true;
+                        int maxLevel = cs.Level;
+                        try { maxLevel = cs.GetMaxLevelCanLevelUpTo(); } catch { }
+                        members.Add(new JObject
+                        {
+                            ["slot"] = slot,
+                            ["name"] = m.gameObject.name,
+                            ["level"] = cs.Level,
+                            ["max_level"] = maxLevel,
+                            ["unspent"] = unspent
+                        });
+                    }
+                }
+            }
+            catch { /* party not alive (main menu / creation) */ }
+            r["pending"] = anyPending;
+            r["members"] = members;
+            bool uiOpen = false;
+            try { uiOpen = UICharacterCreationManager.Instance != null; } catch { }
+            r["ui_open"] = uiOpen;
+            return r;
         }
 
         private static JObject ReadCreation()
