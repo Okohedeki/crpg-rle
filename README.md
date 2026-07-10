@@ -54,11 +54,14 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
 1. **Install the bridge mod** — see `bridge_mod/INSTALL.md` (BepInEx 5.4.22, two
    required `BepInEx.cfg` edits, build + copy the plugin).
 2. **Install the Python package**: `pip install -e ".[dev]"`.
-3. **(Optional) build the dialogue corpus**: `python pipeline/extract_options.py`
-   then, with `ANTHROPIC_API_KEY` set, `tag_options.py` → `paraphrase.py` →
-   `verify_tags.py` → `build_corpus.py`. A small demo corpus
-   (`corpora/act1_demo/`) is included to exercise the randomizer without an API
-   key (`python pipeline/make_demo_corpus.py`).
+3. **(Optional) build the dialogue corpus** with a **local LLM via Ollama** (no
+   API key): `python pipeline/extract_options.py` then `tag_options.py` →
+   `paraphrase.py` → `verify_tags.py` → `build_corpus.py`. Each LLM stage calls a
+   local Ollama server (default `llama3.1:8b`; `--model`/`--workers` and
+   `CRPG_OLLAMA_MODEL`/`CRPG_OLLAMA_URL` override). The blind re-tag safeguard
+   still rejects meaning-drifting paraphrases. A small demo corpus
+   (`corpora/act1_demo/`) exercises the randomizer without any generation
+   (`python pipeline/make_demo_corpus.py`).
 4. **Run the env**:
    ```python
    from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
@@ -120,6 +123,33 @@ and talents; faction Favor/Wrath; Conquest globals; and any relevant class,
 background, equipment, or other creation selectors. Anything omitted from the
 declaration remains inherited from the pristine base save and can therefore
 leak that save's original build into training.
+
+## Training (PPO / GRPO)
+
+`crpg_rle/train/` is the agent/training side (kept out of the generic env core):
+a multi-input actor-critic (CNN pixels + MLP state/goal + mode embedding →
+MultiDiscrete heads + value) with standalone PyTorch **PPO** and **GRPO**
+trainers, per-update loss logging (CSV + console), and a fast **proxy env**
+(`ProxyCRPGEnv`, identical spaces + a goal-conditioned reward) for validating the
+scaffolding at thousands of steps/sec before spending live-game time.
+
+```bash
+# validate the scaffolding on the proxy (loss matures in seconds):
+python -m crpg_rle.train.train --algo ppo  --env proxy --steps 100000 --csv runs/ppo.csv
+python -m crpg_rle.train.train --algo grpo --env proxy --steps 100000 --csv runs/grpo.csv
+
+# single-agent run on the live game (slow; small rollout lands updates sooner):
+python -m crpg_rle.train.train --algo ppo --env live \
+  --save "<your_save>.savegame" --obs-size 84 --episode-len 64 \
+  --rollout-steps 64 --steps 256 --time-scale 4 --csv runs/ppo_live.csv
+```
+
+Anti-reward-hacking is layered: at the **environment** level the dialogue
+randomizer (paraphrase + shuffle per episode) and favor-only-in-dialogue reward
+force the agent to read option *meaning*, and reward is goal-conditioned on a
+per-episode target faction; at the **optimizer** level PPO adds reward/advantage
+normalization, an entropy bonus, and a KL early-stop, while GRPO adds a KL
+penalty to a frozen reference policy.
 
 ## Status / definition of done
 
