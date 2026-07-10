@@ -144,9 +144,12 @@ namespace CRPGBridge
                 if (pc == null) return true;
                 Camera cam = Camera.main;
                 if (cam == null) return true;
-                Vector3 sp = cam.WorldToScreenPoint(pc.transform.position);
-                return sp.z > 0f && sp.x >= 0f && sp.x <= Screen.width
-                    && sp.y >= 0f && sp.y <= Screen.height;
+                Vector3 vp = cam.WorldToViewportPoint(pc.transform.position);
+                // This engine's world camera is orthographic; on this Unity the
+                // projected z sign is unreliable for ortho, so only gate on z for
+                // perspective cameras.
+                bool inFront = cam.orthographic || vp.z > 0f;
+                return inFront && vp.x >= 0f && vp.x <= 1f && vp.y >= 0f && vp.y <= 1f;
             }
             catch { return true; }
         }
