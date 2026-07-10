@@ -56,6 +56,7 @@ namespace CRPGBridge
             _ipc.Register("to_menu", HandleToMenu);
             _ipc.Register("dialogue", HandleDialogue);
             _ipc.Register("diag_rng", HandleDiagRng);
+            _ipc.Register("diag_dialogue", HandleDiagDialogue);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -228,6 +229,22 @@ namespace CRPGBridge
                 owner = SDK.GameState.s_playerCharacter.gameObject;
             FlowChartPlayer p = cm.StartConversation(file, owner, FlowChartPlayer.DisplayMode.Standard, false);
             return new JObject { ["started"] = p != null };
+        }
+
+        private JObject HandleDiagDialogue(JObject req)
+        {
+            return new JObject
+            {
+                ["active"] = DialogueInterceptor.Active,
+                ["corpus_loaded"] = DialogueInterceptor.Corpus.Loaded,
+                ["corpus_count"] = DialogueInterceptor.Corpus.Count,
+                ["get_node_text_calls"] = DialogueInterceptor.GetNodeTextCalls,
+                ["swap_count"] = DialogueInterceptor.SwapCount,
+                ["last_conv"] = DialogueInterceptor.LastConv,
+                ["last_node"] = DialogueInterceptor.LastNode,
+                ["last_for_player_input"] = DialogueInterceptor.LastForPlayerInput,
+                ["last_had_variant"] = DialogueInterceptor.LastHadVariant
+            };
         }
 
         /// <summary>diag_rng: cross-language RNG check. Returns the first 3 outputs

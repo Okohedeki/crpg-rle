@@ -23,6 +23,14 @@ namespace CRPGBridge
         public static readonly Corpus Corpus = new Corpus();
         public static Action<string> Log = delegate { };
 
+        // Diagnostics (surfaced via diag op).
+        public static int GetNodeTextCalls;
+        public static int SwapCount;
+        public static string LastConv = "";
+        public static int LastNode = -1;
+        public static bool LastForPlayerInput;
+        public static bool LastHadVariant;
+
         private const ulong ShuffleSalt = 0xA5A5A5A5A5A5A5A5UL;
 
         private static PropertyInfo _filenameProp; // FlowChart.Filename
@@ -76,16 +84,19 @@ namespace CRPGBridge
         // GetNodeText(player, node, forPlayerInput, requestType): args[1]=node, args[2]=forPlayerInput.
         private static void PostGetNodeText(object __instance, object[] __args, ref string __result)
         {
+            GetNodeTextCalls++;
             if (!Active || !Corpus.Loaded) return;
             if (__args == null || __args.Length < 3) return;
             bool forPlayerInput = __args[2] is bool && (bool)__args[2];
+            LastForPlayerInput = forPlayerInput;
             if (!forPlayerInput) return;
             int nodeId = NodeId(__args[1]);
-            if (nodeId < 0) return;
             string conv = ConvName(__instance);
-            if (conv.Length == 0) return;
+            LastConv = conv; LastNode = nodeId;
+            if (nodeId < 0 || conv.Length == 0) return;
             string variant = Corpus.PickVariant(conv, nodeId, Seed);
-            if (variant != null) __result = variant;
+            LastHadVariant = variant != null;
+            if (variant != null) { __result = variant; SwapCount++; }
         }
 
         // __result is List<PlayerResponseNode>, which implements IList — mutate in place.

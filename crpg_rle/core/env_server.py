@@ -2,10 +2,10 @@
 Python CRPGEnv.
 
 PufferLib 4.0 has no out-of-process env path: envs are C compiled into _C.so and
-stepped in a synchronous OpenMP loop. To drive a live Unity game from that
-trainer we run this server on the game host; the 4.0 C shim (ocean/tyranny)
-connects and, inside its blocking c_step, sends the action ints and receives a
-flat observation + reward + terminal frame. All game logic stays here in Python.
+stepped in a synchronous OpenMP loop. To drive a live game from that
+trainer we run this server on the game host; the 4.0 C shim connects and, inside
+its blocking c_step, sends the action ints and receives a flat observation +
+reward + terminal frame. All game logic stays in the injected env (Python).
 
 Protocol (little-endian, one client):
   handshake:  client -> {magic 'CRPG', proto u32}
