@@ -18,6 +18,10 @@ from pydantic import BaseModel, Field, field_validator
 # --- Model + paths -----------------------------------------------------------
 MODEL_ID = "claude-opus-4-8"
 
+# Local LLM via Ollama (no API key). Override with CRPG_OLLAMA_MODEL / _URL.
+OLLAMA_URL = os.environ.get("CRPG_OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("CRPG_OLLAMA_MODEL", "llama3.1:8b")
+
 PIPELINE_DIR = Path(__file__).resolve().parent
 OUT_DIR = PIPELINE_DIR / "out"
 OPTIONS_JSONL = OUT_DIR / "options.jsonl"
@@ -111,6 +115,39 @@ def require_client():
     import anthropic  # local import: optional dependency
 
     return anthropic.Anthropic()
+
+
+def ollama_chat(
+    system: str,
+    user: str,
+    *,
+    model: str | None = None,
+    json_mode: bool = True,
+    temperature: float = 0.4,
+    num_predict: int = 1024,
+    timeout: float = 180.0,
+) -> str:
+    """One-shot chat against a local Ollama server; returns the reply text.
+
+    ``json_mode`` sets Ollama's ``format=json`` so the model must emit valid JSON
+    (the tag/paraphrase stages parse it). No API key required.
+    """
+    import requests  # local import: only the LLM stages need it
+
+    payload: dict = {
+        "model": model or OLLAMA_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "stream": False,
+        "options": {"temperature": temperature, "num_predict": num_predict},
+    }
+    if json_mode:
+        payload["format"] = "json"
+    resp = requests.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()["message"]["content"]
 
 
 _JSON_RE = re.compile(r"\{.*\}|\[.*\]", re.DOTALL)

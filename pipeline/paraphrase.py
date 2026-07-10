@@ -20,14 +20,15 @@ import json
 import sys
 from pathlib import Path
 
+from concurrent.futures import ThreadPoolExecutor
+
 from _common import (
-    MODEL_ID,
+    OLLAMA_MODEL,
     VARIANTS_RAW_JSON,
     extract_json,
     load_options,
-    message_text,
+    ollama_chat,
     option_key,
-    require_client,
 )
 
 MAX_TOKENS = 1024
@@ -44,35 +45,63 @@ SYSTEM_PROMPT = (
 
 def build_prompt(text: str, n: int) -> str:
     return (
-        f"Produce exactly {n} distinct paraphrases of the dialogue option below.\n"
-        f"Return ONLY a JSON array of {n} strings.\n\n"
+        f"Produce exactly {n} distinct paraphrases of the dialogue option below. "
+        f"Each must preserve the exact meaning, intent, and speech-act; only the "
+        f"wording differs. Keep proper nouns intact.\n"
+        f'Respond with a JSON object of EXACTLY this shape: '
+        f'{{"paraphrases": ["<text1>", "<text2>", ...]}} containing {n} strings.\n\n'
         f'ORIGINAL OPTION:\n"""{text}"""'
     )
 
 
 def _parse_variants(raw: str, n: int) -> list[str]:
     data = extract_json(raw)
+    # Local models under format=json emit varied shapes: prefer {"paraphrases":[...]},
+    # else the first list value, else (the messy case) the dict keys are the texts.
+    if isinstance(data, dict):
+        if isinstance(data.get("paraphrases"), list):
+            data = data["paraphrases"]
+        else:
+            lists = [v for v in data.values() if isinstance(v, list)]
+            if lists:
+                data = lists[0]
+            else:
+                texts = [str(k) for k in data.keys() if len(str(k).strip()) > 3]
+                texts += [str(v) for v in data.values() if len(str(v).strip()) > 3]
+                data = texts
     if not isinstance(data, list):
         raise ValueError("expected a JSON array")
-    variants = [str(v).strip() for v in data if str(v).strip()]
+    seen: set[str] = set()
+    variants: list[str] = []
+    for v in data:
+        s = str(v).strip()
+        if s and s not in seen:
+            seen.add(s)
+            variants.append(s)
     return variants[:n]
 
 
-def paraphrase(client, options: list[dict], n: int) -> dict[str, list[str]]:
+def _paraphrase_one(rec: dict, n: int, model: str) -> tuple[str, list[str] | None]:
+    try:
+        raw = ollama_chat(SYSTEM_PROMPT, build_prompt(rec["text"], n),
+                          model=model, json_mode=True, temperature=0.8,
+                          num_predict=MAX_TOKENS)
+        return option_key(rec), _parse_variants(raw, n)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! {option_key(rec)}: {exc}", file=sys.stderr)
+        return option_key(rec), None
+
+
+def paraphrase(options: list[dict], n: int, model: str, workers: int) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
-    for i, rec in enumerate(options, 1):
-        resp = client.messages.create(
-            model=MODEL_ID,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_prompt(rec["text"], n)}],
-        )
-        try:
-            out[option_key(rec)] = _parse_variants(message_text(resp), n)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ! {option_key(rec)}: {exc}", file=sys.stderr)
-        if i % 25 == 0:
-            print(f"  paraphrased {i}/{len(options)}")
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for key, variants in pool.map(lambda r: _paraphrase_one(r, n, model), options):
+            done += 1
+            if variants:
+                out[key] = variants
+            if done % 25 == 0:
+                print(f"  paraphrased {done}/{len(options)}")
     return out
 
 
@@ -80,16 +109,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--n", type=int, default=6, help="Variants per option (default 6).")
     ap.add_argument("--limit", type=int, default=None, help="Only the first N options.")
+    ap.add_argument("--model", default=OLLAMA_MODEL, help="Ollama model to use.")
+    ap.add_argument("--workers", type=int, default=2, help="Concurrent requests.")
     ap.add_argument("--out", type=str, default=str(VARIANTS_RAW_JSON))
     args = ap.parse_args(argv)
 
     options = load_options()
     if args.limit is not None:
         options = options[: args.limit]
-    print(f"paraphrasing {len(options)} options x {args.n} variants with {MODEL_ID}")
+    print(f"paraphrasing {len(options)} options x {args.n} variants with {args.model}")
 
-    client = require_client()  # exits 2 if no API key
-    variants = paraphrase(client, options, args.n)
+    variants = paraphrase(options, args.n, args.model, args.workers)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

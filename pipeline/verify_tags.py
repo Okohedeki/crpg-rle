@@ -26,18 +26,19 @@ import json
 import sys
 from pathlib import Path
 
+from concurrent.futures import ThreadPoolExecutor
+
 from _common import (
     AXES,
-    MODEL_ID,
+    OLLAMA_MODEL,
     OptionTags,
     TAGS_JSON,
     VARIANTS_RAW_JSON,
     VARIANTS_VERIFIED_JSON,
     extract_json,
     load_options,
-    message_text,
+    ollama_chat,
     option_key,
-    require_client,
 )
 from tag_options import SYSTEM_PROMPT as TAG_SYSTEM_PROMPT
 from tag_options import build_prompt as build_tag_prompt
@@ -61,51 +62,52 @@ def tags_consistent(original: dict, retag: dict) -> bool:
     return True
 
 
-def _retag(client, variant_text: str) -> dict:
+def _retag(variant_text: str, model: str) -> dict:
     """Blind re-tag: the model sees only the variant, never the original/tags."""
-    resp = client.messages.create(
-        model=MODEL_ID,
-        max_tokens=1024,
-        system=TAG_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_tag_prompt(variant_text)}],
-    )
-    data = extract_json(message_text(resp))
+    raw = ollama_chat(TAG_SYSTEM_PROMPT, build_tag_prompt(variant_text),
+                      model=model, json_mode=True, num_predict=1024)
+    data = extract_json(raw)
     return OptionTags(**data).model_dump()
 
 
 def verify(
-    client,
     options: list[dict],
     tags: dict[str, dict],
     raw_variants: dict[str, list[str]],
+    model: str,
+    workers: int,
 ) -> tuple[dict[str, dict], dict]:
     verified: dict[str, dict] = {}
     n_variants_seen = 0
     n_variants_accepted = 0
     n_flagged = 0
 
-    by_key = {option_key(r): r for r in options}
-    for key, rec in by_key.items():
-        orig_tags = tags.get(key)
-        if orig_tags is None:
-            continue  # untagged options can't be verified
-        accepted: list[str] = []
-        for variant in raw_variants.get(key, []):
-            n_variants_seen += 1
-            try:
-                retag = _retag(client, variant)
-            except Exception as exc:  # noqa: BLE001
-                print(f"  ! {key}: retag failed: {exc}", file=sys.stderr)
-                continue
-            if tags_consistent(orig_tags, retag):
-                accepted.append(variant)
-                n_variants_accepted += 1
+    def retag_safe(text: str):
+        try:
+            return _retag(text, model)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  ! retag failed: {exc}", file=sys.stderr)
+            return None
 
-        if len(accepted) < 2:
-            n_flagged += 1
-            verified[key] = {"tags": orig_tags, "variants": [rec["text"]], "flagged": True}
-        else:
-            verified[key] = {"tags": orig_tags, "variants": accepted}
+    by_key = {option_key(r): r for r in options}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for key, rec in by_key.items():
+            orig_tags = tags.get(key)
+            if orig_tags is None:
+                continue  # untagged options can't be verified
+            variants = raw_variants.get(key, [])
+            n_variants_seen += len(variants)
+            accepted: list[str] = []
+            for variant, retag in zip(variants, pool.map(retag_safe, variants)):
+                if retag is not None and tags_consistent(orig_tags, retag):
+                    accepted.append(variant)
+                    n_variants_accepted += 1
+
+            if len(accepted) < 2:
+                n_flagged += 1
+                verified[key] = {"tags": orig_tags, "variants": [rec["text"]], "flagged": True}
+            else:
+                verified[key] = {"tags": orig_tags, "variants": accepted}
 
     report = {
         "options": len(verified),
@@ -122,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--limit", type=int, default=None, help="Only the first N options.")
     ap.add_argument("--tags", type=str, default=str(TAGS_JSON))
     ap.add_argument("--variants", type=str, default=str(VARIANTS_RAW_JSON))
+    ap.add_argument("--model", default=OLLAMA_MODEL, help="Ollama model to use.")
+    ap.add_argument("--workers", type=int, default=2, help="Concurrent requests.")
     ap.add_argument("--out", type=str, default=str(VARIANTS_VERIFIED_JSON))
     args = ap.parse_args(argv)
 
@@ -129,13 +133,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit is not None:
         options = options[: args.limit]
 
-    client = require_client()  # exits 2 if no API key (before reading stage inputs)
-
     tags = json.loads(Path(args.tags).read_text(encoding="utf-8"))
     raw_variants = json.loads(Path(args.variants).read_text(encoding="utf-8"))
-    print(f"verifying variants for {len(options)} options with {MODEL_ID}")
+    print(f"verifying variants for {len(options)} options with {args.model}")
 
-    verified, report = verify(client, options, tags, raw_variants)
+    verified, report = verify(options, tags, raw_variants, args.model, args.workers)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
