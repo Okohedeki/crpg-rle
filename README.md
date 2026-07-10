@@ -113,6 +113,14 @@ point-budget policy can be layered on the declaration generator; the environment
 currently enforces safe bounds and persistence, not a single prescribed build
 budget.
 
+**Full-build requirement:** changing only the six attributes is not enough to
+produce an independent starting character. Every field intended to vary must be
+declared together, including weapon, defense, and magic skill ranks; abilities
+and talents; faction Favor/Wrath; Conquest globals; and any relevant class,
+background, equipment, or other creation selectors. Anything omitted from the
+declaration remains inherited from the pristine base save and can therefore
+leak that save's original build into training.
+
 ## Status / definition of done
 
 See `docs/DOD.md` for the build-brief §12 checklist mapped to evidence. Verified
