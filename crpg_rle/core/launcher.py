@@ -126,6 +126,14 @@ class GameProcess:
                 if "Fatal error" in title:
                     fatal.append(title)
                     return True
+                # Require a real rendered client area — during boot the game
+                # briefly owns a 0x0 splash window that captures as black.
+                try:
+                    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+                    if (right - left) <= 0 or (bottom - top) <= 0:
+                        return True
+                except Exception:  # noqa: BLE001
+                    return True
                 found.append(hwnd)
                 return True
 
