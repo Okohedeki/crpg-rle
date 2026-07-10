@@ -194,7 +194,7 @@ def test_intercept_hook_merges_reobserved_state():
         def mode(self, state): return Mode.OVERWORLD
         def pack_observation_state(self, state): return np.zeros(3, np.float32)
         def goal_vector(self): return np.zeros(1, np.float32)
-        def reward(self, mode, events, state): return {"m": 0.0}
+        def reward(self, mode, events, state, action=None): return {"m": 0.0}
         def terminal(self, state): return False, None, 0.0
         def reset(self, seed): return {"target_faction": "A", "dialogue_seed": 0}
 

@@ -59,6 +59,29 @@ def compute_gae(rewards, values, bootstrap, terminated, dones, gamma, lam):
     return adv, returns
 
 
+def action_stats(actions) -> dict:
+    """Compact summary of the actions taken this rollout: mouse-button mix
+    (right-click = move order), key usage, and cursor spread. Surfaces failure
+    modes like 'stuck on one key' (key_top_frac→1) or 'never moves' (btn_right→0).
+    """
+    a = np.asarray(actions)
+    if a.ndim != 2 or a.shape[1] < 4 or a.shape[0] == 0:
+        return {}
+    buttons, keys = a[:, 2], a[:, 3]
+    n = a.shape[0]
+    key_counts = np.bincount(keys, minlength=1)
+    return {
+        "btn_none": float(np.mean(buttons == 0)),
+        "btn_left": float(np.mean(buttons == 1)),
+        "btn_right": float(np.mean(buttons == 2)),
+        "btn_dbl": float(np.mean(buttons == 3)),
+        "key_active": float(np.mean(keys != 0)),
+        "key_top_frac": float(key_counts.max() / n),
+        "cursor_x": float(np.mean(a[:, 0])),
+        "cursor_y": float(np.mean(a[:, 1])),
+    }
+
+
 class Logger:
     """Console + CSV logger for per-update training metrics."""
 
@@ -75,7 +98,10 @@ class Logger:
         row = {"wall_s": round(time.monotonic() - self._t0, 1), **row}
         if self._file is not None:
             if self._writer is None:
-                self._writer = csv.DictWriter(self._file, fieldnames=list(row))
+                # Fix columns from the first row; ignore any later-appearing keys
+                # so a rollout with an extra channel can't crash the run.
+                self._writer = csv.DictWriter(self._file, fieldnames=list(row),
+                                              extrasaction="ignore")
                 self._writer.writeheader()
             self._writer.writerow(row)
             self._file.flush()

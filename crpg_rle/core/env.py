@@ -247,6 +247,9 @@ class CRPGEnv(gym.Env):
 
     def step(self, action):
         inputs = S.decode_action(action, self.adapter.action_key_list())
+        gate = getattr(self.adapter, "gate_inputs", None)
+        if callable(gate):
+            inputs = gate(action, inputs)
         try:
             self._bridge.request("input", active=True)
             self._bridge.act(inputs, frames=self.config.frame_skip)
@@ -273,7 +276,7 @@ class CRPGEnv(gym.Env):
         mode = self.adapter.mode(state)
         self._mode_counts[int(mode)] = self._mode_counts.get(int(mode), 0) + 1
 
-        channel_deltas = self.adapter.reward(mode, events, state)
+        channel_deltas = self.adapter.reward(mode, events, state, action)
         scalar, weighted = self.rewards.step(channel_deltas)
 
         done, kind, penalty = self.adapter.terminal(state)

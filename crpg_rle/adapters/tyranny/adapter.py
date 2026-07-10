@@ -7,6 +7,7 @@ The core CRPGEnv talks to this through a small, game-agnostic surface.
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 import numpy as np
@@ -60,6 +61,8 @@ class TyrannyAdapter:
         self.milestones = MilestoneChain(granularity=self.config.milestone_granularity)
         self.favor = FavorReward()
         self._target_faction: str | None = None
+        self._visited_cells: set = set()
+        self._last_pause_time = 0.0
         self.config_driver = ConfigDriver(
             self.validate_build_spec(self.config.build_spec),
             death_mode=getattr(self.config, "death_mode", "terminal"),
@@ -98,13 +101,67 @@ class TyrannyAdapter:
             vec[self.target_faction_index(self._target_faction)] = 1.0
         return vec
 
-    def reward(self, mode: Mode, events: list[dict], state: dict) -> dict[str, float]:
+    def reward(self, mode: Mode, events: list[dict], state: dict,
+               action=None) -> dict[str, float]:
         """RewardRouter contract: per-channel deltas for this step."""
         milestone_r, _fired = self.milestones.update(events, state)
         favor_r = self.favor.update(events, mode)
         # MC-death penalty, if the main character died this step.
         death_r = self.config_driver.take_death_penalty()
-        return {"milestone": milestone_r, "faction_favor": favor_r, "death": death_r}
+        # Shaping: exploration (movement toward new ground) and pause behavior.
+        explore_r = self._exploration_reward(state)
+        pause_r = self._pause_reward(state, action)
+        return {"milestone": milestone_r, "faction_favor": favor_r, "death": death_r,
+                "explore": explore_r, "pause": pause_r}
+
+    def _player_pos(self, state: dict):
+        party = state.get("party") or []
+        if not party:
+            return None
+        return (party[0].get("pos") if isinstance(party[0], dict) else None)
+
+    def _exploration_reward(self, state: dict) -> float:
+        """Count-based novelty: one-time bonus for entering a new discretized
+        (area, cell) this episode. Rewards covering new ground (a modern
+        exploration-shaping technique) and can't be farmed by jittering in place."""
+        pos = self._player_pos(state)
+        if not pos or len(pos) < 3:
+            return 0.0
+        size = max(0.1, self.config.explore_cell_size)
+        cell = (state.get("area", ""), round(pos[0] / size), round(pos[2] / size))
+        if cell in self._visited_cells:
+            return 0.0
+        self._visited_cells.add(cell)
+        return float(self.config.explore_bonus)
+
+    def _pause_reward(self, state: dict, action) -> float:
+        """Discourage the pause loop (small cost per pause press) but reward a
+        command issued while paused in combat (tactical pause)."""
+        if action is None:
+            return 0.0
+        key = ACTION_KEYS[int(action[3])] if int(action[3]) < len(ACTION_KEYS) else ""
+        button = int(action[2])
+        r = 0.0
+        if key == "Space":
+            r -= float(self.config.pause_penalty)
+        is_command = button != 0 or key in ("Alpha1", "Alpha2", "Alpha3", "Alpha4",
+                                             "Alpha5", "Alpha6", "Alpha7", "Alpha8", "Alpha9")
+        if state.get("paused") and state.get("in_combat") and is_command:
+            r += float(self.config.tactical_pause_bonus)
+        return r
+
+    def gate_inputs(self, action, inputs: list[dict]) -> list[dict]:
+        """Rate-limit pause: drop a Space key press that lands within the pause
+        cooldown, so the agent can't get stuck toggling pause every step. The
+        policy may still choose it; only the extra executions are suppressed."""
+        key = ACTION_KEYS[int(action[3])] if int(action[3]) < len(ACTION_KEYS) else ""
+        if key != "Space":
+            return inputs
+        now = time.monotonic()
+        if now - self._last_pause_time < float(self.config.pause_cooldown_seconds):
+            return [i for i in inputs if not (i.get("t") == "key" and i.get("key") == "Space")]
+        self._last_pause_time = now
+        return inputs
 
     def terminal(self, state: dict) -> tuple[bool, str | None, float]:
         done, kind, penalty = self.milestones.terminal(state)
@@ -175,6 +232,8 @@ class TyrannyAdapter:
         self.milestones.reset()
         self.favor.reset(self._target_faction)
         self.config_driver.reset()
+        self._visited_cells = set()
+        self._last_pause_time = 0.0
         return {"target_faction": self._target_faction, "dialogue_seed": dialogue_seed}
 
     def validate_build_spec(self, spec: dict | None) -> dict | None:

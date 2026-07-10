@@ -43,8 +43,24 @@ class TyrannyConfig:
 
     milestone_granularity: str = "coarse"   # "coarse" | "fine"
     reward_weights: dict[str, float] = field(
-        default_factory=lambda: {"milestone": 1.0, "faction_favor": 1.0, "death": 1.0}
+        default_factory=lambda: {
+            "milestone": 1.0, "faction_favor": 1.0, "death": 1.0,
+            "explore": 1.0, "pause": 1.0,
+        }
     )
+
+    # Exploration shaping (count-based novelty — drives movement toward new ground
+    # without being gameable by jittering, since each cell is rewarded once/episode).
+    explore_bonus: float = 0.1
+    explore_cell_size: float = 3.0        # world units per novelty cell
+
+    # Pause shaping: a small cost for toggling pause (discourages the pause loop),
+    # and a bonus for issuing a command while paused in combat (tactical pause).
+    pause_penalty: float = 0.02
+    tactical_pause_bonus: float = 0.25
+    # Minimum real seconds between executed pause toggles (breaks the pause loop
+    # mechanically). The agent may still choose pause; extra presses are dropped.
+    pause_cooldown_seconds: float = 5.0
 
     edict_fail_days: float = 0.0
 

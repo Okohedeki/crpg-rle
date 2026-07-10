@@ -14,7 +14,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from crpg_rle.train.buffer import Logger, RunningMeanStd, compute_gae
+import collections
+
+from crpg_rle.train.buffer import Logger, RunningMeanStd, action_stats, compute_gae
 from crpg_rle.train.policy import MultiInputActorCritic, obs_to_tensor
 
 
@@ -63,6 +65,7 @@ class PPOTrainer:
         boot = np.zeros(n, dtype=np.float32)
         term_boot: dict[int, float] = {}
         self._ep_returns = []
+        channel_sums: dict[str, float] = collections.defaultdict(float)
 
         obs = self._obs
         for t in range(n):
@@ -70,7 +73,9 @@ class PPOTrainer:
             with torch.no_grad():
                 action, logp, value, _ = self.policy.act(ot)
             a = action[0].cpu().numpy()
-            next_obs, reward, terminated, truncated, _info = self.env.step(a)
+            next_obs, reward, terminated, truncated, info = self.env.step(a)
+            for ch, val in (info.get("reward_channels") or {}).items():
+                channel_sums[ch] += float(val)
             done = bool(terminated or truncated)
 
             obs_buf.append(obs)
@@ -115,6 +120,7 @@ class PPOTrainer:
             "logp": np.asarray(logp_buf, dtype=np.float32),
             "values": np.asarray(val_buf, dtype=np.float32),
             "adv": adv, "returns": returns,
+            "channel_sums": dict(channel_sums),
         }
 
     def update(self, batch) -> dict:
@@ -186,10 +192,13 @@ class PPOTrainer:
             batch = self.collect()
             stats = self.update(batch)
             mean_ret = float(np.mean(self._ep_returns)) if self._ep_returns else float("nan")
-            self.logger.log({
+            row = {
                 "update": update, "step": self._global_step,
                 "ep_return": mean_ret, "n_ep": len(self._ep_returns),
                 "pg_loss": stats["pg_loss"], "v_loss": stats["v_loss"],
                 "entropy": stats["entropy"], "approx_kl": stats["approx_kl"],
                 "clipfrac": stats["clipfrac"],
-            })
+            }
+            row.update({f"r_{k}": v for k, v in batch["channel_sums"].items()})  # per-channel reward
+            row.update(action_stats(batch["actions"]))                          # actions taken
+            self.logger.log(row)
