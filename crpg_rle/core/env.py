@@ -98,6 +98,17 @@ class CRPGEnv(gym.Env):
         self.rewards.reset()
         self._steps = 0
 
+        # Arm the per-episode dialogue randomizer (paraphrase swap + shuffle).
+        dr = getattr(self.config, "dialogue_randomizer", False)
+        corpus_path = getattr(self.config, "corpus_path", None)
+        if dr and corpus_path:
+            self._bridge.request(
+                "dialogue",
+                active=True,
+                seed=episode_cfg["dialogue_seed"],
+                corpus_path=corpus_path,
+            )
+
         if self.config.start_mode == "act1_save" and self.config.save_start:
             self._wait_menu()
             for _ in range(30):

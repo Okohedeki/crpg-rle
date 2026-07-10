@@ -56,6 +56,11 @@ class TyrannyConfig:
     max_party: int = 6
     max_steps: int = 20000
 
+    # Dialogue randomizer (§9). When corpus_path is set and dialogue_randomizer
+    # is True, the mod swaps option text + shuffles order per episode.
+    corpus_path: str | None = None
+    dialogue_randomizer: bool = True
+
     @property
     def port(self) -> int:
         return self.port_base + self.instance_id

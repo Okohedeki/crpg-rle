@@ -55,6 +55,7 @@ namespace CRPGBridge
             _ipc.Register("new_game", HandleNewGame);
             _ipc.Register("to_menu", HandleToMenu);
             _ipc.Register("dialogue", HandleDialogue);
+            _ipc.Register("diag_rng", HandleDiagRng);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -227,6 +228,20 @@ namespace CRPGBridge
                 owner = SDK.GameState.s_playerCharacter.gameObject;
             FlowChartPlayer p = cm.StartConversation(file, owner, FlowChartPlayer.DisplayMode.Standard, false);
             return new JObject { ["started"] = p != null };
+        }
+
+        /// <summary>diag_rng: cross-language RNG check. Returns the first 3 outputs
+        /// of SplitMix64(seed) and hash64(text) so Python can assert parity.</summary>
+        private JObject HandleDiagRng(JObject req)
+        {
+            ulong seed = req["seed"] != null ? req["seed"].Value<ulong>() : 0UL;
+            string text = req["text"] != null ? req["text"].Value<string>() : "";
+            var rng = new SplitMix64(seed);
+            return new JObject
+            {
+                ["seq"] = new JArray(rng.NextU64().ToString(), rng.NextU64().ToString(), rng.NextU64().ToString()),
+                ["hash"] = SplitMix64.Hash64(text).ToString()
+            };
         }
 
         /// <summary>diag_asm: enumerate loaded assemblies (duplicate-copy detection).</summary>
