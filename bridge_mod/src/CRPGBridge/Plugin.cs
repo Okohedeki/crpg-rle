@@ -1,5 +1,6 @@
 using System;
 using BepInEx;
+using HarmonyLib;
 using Newtonsoft.Json.Linq;
 using UnityEngine;
 
@@ -14,17 +15,30 @@ namespace CRPGBridge
         public const int ProtocolVersion = 1;
 
         private IpcServer _ipc;
+        private Harmony _harmony;
 
         private void Awake()
         {
             int instanceId = ParseIntEnv("CRPG_INSTANCE_ID", 0);
             int port = ParseIntEnv("CRPG_BRIDGE_PORT", 5555 + instanceId);
 
+            _harmony = new Harmony(PluginGuid);
+            InputInjector.Log = s => Logger.LogWarning("[input] " + s);
+            InputInjector.Apply(_harmony);
+            Logger.LogInfo(string.Format("[input] icall patches: {0} ok, {1} failed",
+                InputInjector.PatchedOk.Count, InputInjector.PatchFailed.Count));
+
             _ipc = new IpcServer(port);
             _ipc.Log = s => Logger.LogInfo("[ipc] " + s);
             _ipc.Register("handshake", HandleHandshake);
             _ipc.Register("ping", req => new JObject());
             _ipc.Register("shutdown", HandleShutdown);
+            _ipc.Register("input", HandleInputMode);
+            _ipc.Register("act", HandleAct);
+            _ipc.Register("diag_input", HandleDiagInput);
+            _ipc.Register("observe", req => new JObject { ["state"] = StateReader.Snapshot() });
+            _ipc.Register("load", HandleLoad);
+            _ipc.Register("console", HandleConsole);
             _ipc.Start();
 
             Logger.LogInfo(string.Format(
@@ -52,6 +66,104 @@ namespace CRPGBridge
         {
             Application.Quit();
             return new JObject();
+        }
+
+        private JObject HandleInputMode(JObject req)
+        {
+            bool on = req["active"] != null && req["active"].Value<bool>();
+            InputInjector.Active = on;
+            if (!on) InputInjector.ClearAll();
+            return new JObject { ["active"] = InputInjector.Active };
+        }
+
+        private int _actEndFrame = -1;
+
+        /// <summary>
+        /// act: {inputs: [{t:"cursor",x,y} | {t:"button",btn:"left|right|middle",action:"press|down|up"}
+        ///               | {t:"key",key:"<KeyCode>",action:"press|down|up"}], frames: k}
+        /// Schedules the inputs, then defers the response until k frames have rendered.
+        /// </summary>
+        private JObject HandleAct(JObject req)
+        {
+            if (_actEndFrame < 0)
+            {
+                InputInjector.Active = true;
+                var inputs = req["inputs"] as JArray;
+                if (inputs != null)
+                {
+                    foreach (JToken tok in inputs) ScheduleInput((JObject)tok);
+                }
+                int frames = req["frames"] != null ? req["frames"].Value<int>() : 1;
+                _actEndFrame = Time.frameCount + Math.Max(1, frames);
+                return null; // defer
+            }
+
+            if (Time.frameCount < _actEndFrame) return null; // still waiting
+
+            _actEndFrame = -1;
+            return new JObject { ["frame"] = Time.frameCount };
+        }
+
+        private static void ScheduleInput(JObject input)
+        {
+            string t = input["t"].Value<string>();
+            switch (t)
+            {
+                case "cursor":
+                    InputInjector.SetCursor(input["x"].Value<float>(), input["y"].Value<float>());
+                    break;
+                case "button":
+                {
+                    string btnName = input["btn"].Value<string>();
+                    int btn = btnName == "right" ? 1 : btnName == "middle" ? 2 : 0;
+                    string action = input["action"] != null ? input["action"].Value<string>() : "press";
+                    if (action == "press") InputInjector.PressButton(btn);
+                    else InputInjector.HoldButton(btn, action == "down");
+                    break;
+                }
+                case "key":
+                {
+                    var key = (KeyCode)Enum.Parse(typeof(KeyCode), input["key"].Value<string>(), true);
+                    string action = input["action"] != null ? input["action"].Value<string>() : "press";
+                    if (action == "press") InputInjector.PressKey(key);
+                    else InputInjector.HoldKey(key, action == "down");
+                    break;
+                }
+                default:
+                    throw new ArgumentException("unknown input type: " + t);
+            }
+        }
+
+        /// <summary>load: {file: "name.savegame"} — starts an async in-engine load.
+        /// Completion = observe.loading falling edge.</summary>
+        private JObject HandleLoad(JObject req)
+        {
+            string file = req["file"].Value<string>();
+            bool accepted = Game.GameResources.LoadGame(file);
+            return new JObject { ["accepted"] = accepted };
+        }
+
+        /// <summary>console: {cmd: "..."} — debug/test lever; enables cheats on first use.</summary>
+        private JObject HandleConsole(JObject req)
+        {
+            SDK.GameState.CheatsEnabled = true;
+            SDK.CommandLine.RunCommand(req["cmd"].Value<string>());
+            return new JObject();
+        }
+
+        private JObject HandleDiagInput(JObject req)
+        {
+            Vector3 raw = Input.mousePosition;          // goes through the icall patch when active
+            Vector3 viaGameInput = GameInput.MousePosition; // engine's own wrapper (firstpass)
+            return new JObject
+            {
+                ["active"] = InputInjector.Active,
+                ["patched"] = new JArray(InputInjector.PatchedOk.ToArray()),
+                ["failed"] = new JArray(InputInjector.PatchFailed.ToArray()),
+                ["mouse_raw"] = new JArray(raw.x, raw.y),
+                ["mouse_gameinput"] = new JArray(viaGameInput.x, viaGameInput.y),
+                ["screen"] = new JArray(Screen.width, Screen.height)
+            };
         }
 
         private void OnDestroy()

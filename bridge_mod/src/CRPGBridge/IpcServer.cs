@@ -57,7 +57,11 @@ namespace CRPGBridge
             Log("socket thread started, alive=" + _thread.IsAlive);
         }
 
-        /// <summary>Call from Unity main thread every frame; executes at most one pending request.</summary>
+        /// <summary>
+        /// Call from Unity main thread every frame; executes at most one pending request.
+        /// A handler returning null defers the response: the same request is re-dispatched
+        /// every frame until the handler returns non-null (used by ops that span frames, e.g. act).
+        /// </summary>
         public void Pump()
         {
             JObject request;
@@ -65,11 +69,16 @@ namespace CRPGBridge
             {
                 if (_pendingRequest == null) return;
                 request = _pendingRequest;
-                _pendingRequest = null;
             }
 
             JObject response = Dispatch(request);
-            lock (_gate) _pendingResponse = response;
+            if (response == null) return; // deferred — retry next frame
+
+            lock (_gate)
+            {
+                _pendingRequest = null;
+                _pendingResponse = response;
+            }
             _responseReady.Set();
         }
 
@@ -98,7 +107,8 @@ namespace CRPGBridge
 
             try
             {
-                JObject result = handler(request) ?? new JObject();
+                JObject result = handler(request);
+                if (result == null) return null; // handler defers
                 if (result["ok"] == null) result["ok"] = true;
                 if (idTok != null) result["id"] = idTok;
                 return result;

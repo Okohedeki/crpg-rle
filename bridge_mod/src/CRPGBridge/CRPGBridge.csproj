@@ -34,6 +34,14 @@
       <HintPath>$(GameDir)\Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(GameDir)\Data\Managed\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="OEIFormats">
+      <HintPath>$(GameDir)\Data\Managed\OEIFormats.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Newtonsoft.Json">
       <HintPath>$(GameDir)\Data\Managed\Newtonsoft.Json.dll</HintPath>
       <Private>false</Private>
