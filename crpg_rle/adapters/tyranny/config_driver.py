@@ -25,14 +25,26 @@ logger = logging.getLogger(__name__)
 class ConfigDriver:
     """Owns the frozen run config and applies it via scripted triggers."""
 
-    def __init__(self, spec: dict | None, *, death_mode: str = "terminal") -> None:
+    def __init__(self, spec: dict | None, *, death_mode: str = "terminal",
+                 recovery_penalty: float = 0.0, checkpoint_save: str | None = None) -> None:
         self.spec = spec or {}
         self.death_mode = death_mode
-        self._levels_done: set[int] = set()
+        self.recovery_penalty = recovery_penalty
+        self.checkpoint_save = checkpoint_save
+        self._levels_done: set[tuple[int, int]] = set()
+        self._pending_penalty = 0.0
 
     def reset(self) -> None:
         """Per-episode reset of trigger bookkeeping (config itself is frozen)."""
         self._levels_done = set()
+        self._pending_penalty = 0.0
+
+    def take_recovery_penalty(self) -> float:
+        """Consume any pending death-recovery penalty (added to the reward this
+        step). Cleared on read so it is charged exactly once per recovery."""
+        penalty = self._pending_penalty
+        self._pending_penalty = 0.0
+        return penalty
 
     # ------------------------------------------------------------------ dispatch
     def on_step(self, bridge, state: dict, events: list[dict]) -> dict | None:
@@ -110,10 +122,21 @@ class ConfigDriver:
 
     # -------------------------------------------------------- death recovery (W5)
     def _handle_death(self, bridge, state: dict) -> bool:
+        """Recover from a party wipe instead of ending the episode. In
+        "checkpoint" mode reload the run save; otherwise heal in place ("revive").
+        The env's milestone terminal is made non-terminal for these modes, so this
+        must run (via the intercept) before the terminal check each step."""
         if self.death_mode == "terminal":
             return False
         if not (state.get("party_dead") or state.get("game_over")):
             return False
-        # W5 fills the revive / checkpoint-load round-trip here (the env's
-        # milestone terminal is made non-terminal for these death_modes).
-        return False
+        try:
+            if self.death_mode == "checkpoint" and self.checkpoint_save:
+                bridge.request("load", file=self.checkpoint_save)
+            else:
+                bridge.request("revive")
+            self._pending_penalty += self.recovery_penalty
+            return True
+        except Exception as exc:
+            logger.warning("death recovery (%s) failed: %s", self.death_mode, exc)
+            return False

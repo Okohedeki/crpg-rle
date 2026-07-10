@@ -63,6 +63,9 @@ class TyrannyAdapter:
         self.config_driver = ConfigDriver(
             self.validate_build_spec(self.config.build_spec),
             death_mode=getattr(self.config, "death_mode", "terminal"),
+            recovery_penalty=getattr(self.config, "death_recovery_penalty", 0.0),
+            checkpoint_save=getattr(self.config, "working_save", None)
+            or getattr(self.config, "save_start", None),
         )
 
     # --- spaces --------------------------------------------------------------
@@ -99,10 +102,17 @@ class TyrannyAdapter:
         """RewardRouter contract: per-channel deltas for this step."""
         milestone_r, _fired = self.milestones.update(events, state)
         favor_r = self.favor.update(events, mode)
-        return {"milestone": milestone_r, "faction_favor": favor_r}
+        # Death-recovery penalty, if the intercept recovered a wipe this step.
+        recovery_r = self.config_driver.take_recovery_penalty()
+        return {"milestone": milestone_r, "faction_favor": favor_r, "recovery": recovery_r}
 
     def terminal(self, state: dict) -> tuple[bool, str | None, float]:
-        return self.milestones.terminal(state)
+        done, kind, penalty = self.milestones.terminal(state)
+        # A party wipe is only terminal in "terminal" death_mode; otherwise the
+        # intercept recovers it (runs before this check), so suppress the failure.
+        if kind == "failure" and self.config_driver.death_mode != "terminal":
+            return False, None, 0.0
+        return done, kind, penalty
 
     def intercept(self, bridge, state: dict, events: list[dict]) -> dict | None:
         """Core hook: apply predefined config at scripted triggers between agent

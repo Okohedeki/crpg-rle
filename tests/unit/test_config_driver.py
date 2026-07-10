@@ -98,6 +98,66 @@ def test_death_terminal_mode_never_acts():
     assert b.observe_calls == 0
 
 
+class RecordBridge:
+    def __init__(self):
+        self.calls = []
+
+    def request(self, op, **kw):
+        self.calls.append((op, kw))
+        return {"ok": True, "revived": True}
+
+    def observe(self):
+        return {"state": {"party_dead": False}, "events": []}
+
+
+def test_death_revive_recovers_and_penalizes_once():
+    d = ConfigDriver({}, death_mode="revive", recovery_penalty=-2.0)
+    b = RecordBridge()
+    reobs = d.on_step(b, {"party_dead": True}, [])
+    assert ("revive", {}) in b.calls
+    assert reobs is not None
+    assert d.take_recovery_penalty() == -2.0
+    assert d.take_recovery_penalty() == 0.0  # charged exactly once
+
+
+def test_death_checkpoint_reloads_save():
+    d = ConfigDriver({}, death_mode="checkpoint", checkpoint_save="run.savegame")
+    b = RecordBridge()
+    d.on_step(b, {"game_over": True}, [])
+    assert ("load", {"file": "run.savegame"}) in b.calls
+
+
+def test_adapter_death_mode_terminal_semantics():
+    from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
+    from crpg_rle.adapters.tyranny.config import TyrannyConfig
+
+    a = TyrannyAdapter(TyrannyConfig(death_mode="terminal"))
+    a.reset(0)
+    done, kind, _ = a.terminal({"party_dead": True})
+    assert done and kind == "failure"
+
+    a2 = TyrannyAdapter(TyrannyConfig(death_mode="revive"))
+    a2.reset(0)
+    done2, kind2, _ = a2.terminal({"party_dead": True})
+    assert not done2 and kind2 is None
+    # success and timer failures remain terminal regardless of death_mode
+    a2.milestones._fired.add("m9")
+    assert a2.terminal({})[:2] == (True, "success")
+
+
+def test_adapter_reward_recovery_channel():
+    from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
+    from crpg_rle.core.modes import Mode
+
+    a = TyrannyAdapter()
+    a.reset(0)
+    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == 0.0
+    # after a recovery the penalty flows through the recovery channel once
+    a.config_driver._pending_penalty = -1.5
+    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == -1.5
+    assert a.reward(Mode.OVERWORLD, [], {})["recovery"] == 0.0
+
+
 def test_intercept_hook_merges_reobserved_state():
     # Exercise the core hook contract with a stub adapter, independent of Tyranny.
     import numpy as np

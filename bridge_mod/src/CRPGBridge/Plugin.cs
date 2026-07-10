@@ -80,6 +80,7 @@ namespace CRPGBridge
             _ipc.Register("levelup_choose", req => LevelUpChoices.Choose(req["index"].Value<int>()));
             _ipc.Register("levelup_skill", req => LevelUpChoices.ApplySkill(req["skill"].Value<string>(), req["delta"].Value<int>()));
             _ipc.Register("levelup_advance", req => LevelUpChoices.Advance(req["action"] != null ? req["action"].Value<string>() : "advance"));
+            _ipc.Register("revive", HandleRevive);
             _ipc.Register("set_global", HandleSetGlobal);
             _ipc.Register("get_global", HandleGetGlobal);
             _ipc.Register("stats", HandleStats);
@@ -440,6 +441,42 @@ namespace CRPGBridge
                 return new JObject { ["ok"] = false, ["error"] = "build mutation is locked" };
             SDK.CommandLine.RunCommand(req["cmd"].Value<string>());
             return new JObject();
+        }
+
+        /// <summary>revive: scripted death recovery (infrastructure, not gameplay).
+        /// Heals the whole party to full and clears PartyDead/GameOver — the exact
+        /// body of UIDeathManager.OnRespawnClicked. Invoked by the env's death-mode
+        /// handler so a party wipe does not end the episode.</summary>
+        private JObject HandleRevive(JObject req)
+        {
+            // Prefer the game's own handler when the death window is up.
+            var dm = UIDeathManager.Instance;
+            if (dm != null)
+            {
+                var m = HarmonyLib.AccessTools.Method(typeof(UIDeathManager), "OnRespawnClicked");
+                if (m != null)
+                {
+                    try { m.Invoke(dm, new object[] { null }); return new JObject { ["revived"] = true, ["via"] = "death_window" }; }
+                    catch { /* fall through to direct heal */ }
+                }
+            }
+
+            int healed = 0;
+            var members = SDK.PartyMemberAI.PartyMembers;
+            if (members != null)
+            {
+                foreach (var member in members)
+                {
+                    if (member == null) continue;
+                    var health = member.gameObject.GetComponent<Game.Health>();
+                    if (health == null) continue;
+                    health.ApplyHealthChangeDirectly(health.MaxHealth - health.CurrentHealth, applyIfDead: true);
+                    healed++;
+                }
+            }
+            SDK.GameState.PartyDead = false;
+            SDK.GameState.GameOver = false;
+            return new JObject { ["revived"] = true, ["via"] = "direct", ["healed"] = healed };
         }
 
         /// <summary>start_conv: {file} — start a conversation with the player as owner (debug/test).</summary>
