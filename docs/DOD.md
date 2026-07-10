@@ -29,6 +29,28 @@ Each v1 done-criterion, its status, and the evidence.
 2. **Detect a milestone event and a mode** — ✅ (quest/reputation/global-var/area/combat event stream; mode detection).
 3. **Reset fast and run above 1× time-scale** — ✅ (reset ~5s, 4× time-scale).
 
+## Character creation — status (investigated in depth)
+
+The env correctly **reaches** creation (`new_game` → LifePath) and exposes the
+wizard's `stage`/`ready` in the observation. Crucially, the creation stages
+**gate on real choices**: `PressOkay` (the true "Next") will not advance past
+Conquest until choices are made — this is correct RL behavior (the agent must
+make the Conquest/class/attribute/**skill** choices; that's the "one-shot build"
+part of the thesis). Scaffolding shipped: creation nav ops
+(`advance`/`regress`/`begin_conquest`/`quick_start`/`set_name`/`complete`), a
+`quick_start` template that satisfies the readiness gate, a telemetry-safety
+patch (creation completion otherwise NREs in `TelemetryManager`), and
+`diag_creation_ui` (skill-widget screen positions + skill points).
+
+**Not yet closed:** scripted completion (`quick_start`) reaches `ready=True` but
+does not cleanly transition to gameplay — bypassing the stage-by-stage flow
+leaves the character/player infrastructure half-initialized for
+`CloseCharacterCreationOnComplete`. And the skills selector only appears on the
+Conquest path (a template pre-fills the build), so verifying an agent's
+skill-point click requires full Conquest play. **For v1, `start_mode="act1_save"`
+is the reliable reset;** full agent-driven creation completion (incl. the skills
+selector) is tracked remaining work (task #12).
+
 ## Deferred (tracked as follow-ups)
 
 - Multi-instance (task #9) — v1 is single-instance per user decision.
