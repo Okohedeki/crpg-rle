@@ -1,0 +1,49 @@
+{
+  "version": "act1_v1",
+  "axes": [
+    "ruthless_merciful",
+    "lawful_chaotic",
+    "honor_pragmatic",
+    "deferential_defiant"
+  ],
+  "factions": [
+    "Disfavored",
+    "ScarletChorus",
+    "Rebels",
+    "Anarchist",
+    "None"
+  ],
+  "alignment_matrix": {
+    "Disfavored": {
+      "ruthless_merciful": -1,
+      "lawful_chaotic": -1,
+      "honor_pragmatic": -1,
+      "deferential_defiant": -1
+    },
+    "ScarletChorus": {
+      "ruthless_merciful": -1,
+      "lawful_chaotic": 1,
+      "honor_pragmatic": 1,
+      "deferential_defiant": 1
+    },
+    "Rebels": {
+      "ruthless_merciful": 1,
+      "lawful_chaotic": 0,
+      "honor_pragmatic": -1,
+      "deferential_defiant": 1
+    },
+    "Anarchist": {
+      "ruthless_merciful": 0,
+      "lawful_chaotic": 2,
+      "honor_pragmatic": 1,
+      "deferential_defiant": 2
+    },
+    "None": {
+      "ruthless_merciful": 0,
+      "lawful_chaotic": 0,
+      "honor_pragmatic": 0,
+      "deferential_defiant": 0
+    }
+  },
+  "options": {}
+}

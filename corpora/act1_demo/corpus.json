@@ -1,0 +1,95 @@
+{
+  "version": "act1_demo",
+  "axes": [
+    "ruthless_merciful",
+    "lawful_chaotic",
+    "honor_pragmatic",
+    "deferential_defiant"
+  ],
+  "alignment_matrix": {
+    "Disfavored": {
+      "ruthless_merciful": -1,
+      "lawful_chaotic": -1,
+      "honor_pragmatic": -1,
+      "deferential_defiant": -1
+    },
+    "ScarletChorus": {
+      "ruthless_merciful": -1,
+      "lawful_chaotic": 1,
+      "honor_pragmatic": 1,
+      "deferential_defiant": 1
+    },
+    "Rebels": {
+      "ruthless_merciful": 1,
+      "lawful_chaotic": 1,
+      "honor_pragmatic": 0,
+      "deferential_defiant": 1
+    },
+    "Anarchist": {
+      "ruthless_merciful": 0,
+      "lawful_chaotic": 2,
+      "honor_pragmatic": 1,
+      "deferential_defiant": 2
+    }
+  },
+  "options": {
+    "08_cv_scarletchoruscamp_lantry_trial:4": {
+      "text_sha256": "1cc0e4ca26033495719354ad8dddb21a4440fcc83d98bb7176fe390b08ed5560",
+      "tags": {
+        "ruthless_merciful": 0,
+        "lawful_chaotic": 1,
+        "honor_pragmatic": 1,
+        "deferential_defiant": 1
+      },
+      "variants": [
+        "\"Very well, let's proceed with the trial you're so set on.\"",
+        "\"So be it. We'll have your trial, then.\"",
+        "\"Alright. Let's get on with this trial you crave.\"",
+        "\"If you insist on a trial, then let's have it.\""
+      ]
+    },
+    "08_cv_scarletchoruscamp_lantry_trial:2": {
+      "text_sha256": "2f7b82ca7f20acec8c1c94b08c5d7e9b28740e2f7980734984d9870a7e425b44",
+      "tags": {
+        "ruthless_merciful": 0,
+        "lawful_chaotic": -2,
+        "honor_pragmatic": -1,
+        "deferential_defiant": 1
+      },
+      "variants": [
+        "\"Hand this prisoner over now \u2014 he's coming into my custody.\"",
+        "\"I am taking custody of this prisoner. Release him immediately.\"",
+        "\"Turn the prisoner over to me at once.\"",
+        "\"Free him now; he answers to me from here on.\""
+      ]
+    },
+    "08_cv_scarletchoruscamp_lantry_trial:70": {
+      "text_sha256": "f9d87a670aef01712d2e785a4e41cd115ffd5e5a34ebe965d9c8de7ce79cf3f5",
+      "tags": {
+        "ruthless_merciful": 1,
+        "lawful_chaotic": 0,
+        "honor_pragmatic": 2,
+        "deferential_defiant": 0
+      },
+      "variants": [
+        "\"He clearly knows something useful, and you'd let him die for entertainment?\"",
+        "\"This man holds valuable intelligence, yet you'd waste him on sport?\"",
+        "\"You'd throw away everything he knows just for a spectacle?\""
+      ]
+    },
+    "08_cv_scarletchoruscamp_lantry_trial:58": {
+      "text_sha256": "0ac94bd771373678ec1129d8feafd4c892b790b24d84ea359846ff4b3ad38489",
+      "tags": {
+        "ruthless_merciful": 1,
+        "lawful_chaotic": 0,
+        "honor_pragmatic": 1,
+        "deferential_defiant": 0
+      },
+      "variants": [
+        "\"Keeping the prisoner alive matters \u2014 this plan is a mistake.\"",
+        "\"This is a terrible idea; we need him breathing.\"",
+        "\"Killing him would be foolish. We need the prisoner alive.\""
+      ]
+    }
+  }
+}
