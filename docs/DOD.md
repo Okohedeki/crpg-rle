@@ -51,6 +51,44 @@ skill-point click requires full Conquest play. **For v1, `start_mode="act1_save"
 is the reliable reset;** full agent-driven creation completion (incl. the skills
 selector) is tracked remaining work (task #12).
 
+## RLE finishing pass (2026-07-10) — metrics, watchable gameplay, real-UI menus, console lockdown
+
+Governing principle: infrastructure ≠ gameplay. Infrastructure (start/load,
+death recovery, menus for the predefined build) is scripted; the agent can never
+reach the console. Prefer the real in-game UI, console only as a locked-down
+fallback. Five workstreams landed, offline-verified (105 unit tests, mod builds,
+C shim compiles); items marked ⚠ need a live playtest to confirm.
+
+- **Console + quit lockdown** — `Hooks/LockdownGuards.cs` refuses
+  `LoadMainMenu`/`Application.Quit`/`SDK.CommandLine.RunCommand`/`UICommandLine`/
+  `UIInGameMenu.Show` while the agent is active (input injecting, no config window
+  open); `CheatsEnabled` forced off during play; env keeps a `BridgeBypass` for
+  its own menu/shutdown. The agent already had no console key in `ACTION_KEYS`;
+  this makes it airtight and stops the historical Esc-quit bridge kill.
+- **Learning metrics** — env-server wire proto bumped to v2: a fixed float
+  trailer carries per-episode `r_milestone`/`r_faction_favor`/`milestones_reached`
+  + terminal one-hot + mode fractions into the C `Log`/`my_log` → PufferLib native
+  logging. Core stays game-agnostic (adapter names/computes the vector).
+- **Config-driver + intercept hook** — `CRPGEnv.step` calls the adapter's optional
+  `intercept` between agent actions; `ConfigDriver` applies the predefined config
+  at scripted triggers. `validate_build_spec` extended (specialization/party/
+  levelups/equipment/consumables/spells/formation/talents).
+- **Level-up + skills via the real UI** — level-up reuses the creation UI
+  (`OpenCharacterCreation`); `LevelUpChoices.cs` clones `CreationChoices` +
+  `levelup_begin/options/choose/skill/advance`; `StateReader` emits `level_up`.
+  ⚠ the level-up *finalize* handler (NGUI binding) needs live confirmation.
+- **Death recovery** — `revive` op (`UIDeathManager.OnRespawnClicked` / direct
+  heal) + `death_mode` {terminal, revive(default), checkpoint}; a wipe is
+  recovered by the intercept before the terminal check (success + edict-timer stay
+  terminal), with a one-shot penalty on a `recovery` reward channel. ⚠ confirm
+  revive-in-place vs checkpoint feels right in a real Edgering wipe.
+
+Live-playtest items still open: level-up finalize handler; `OpenCharacterCreation`
+mid-area for player+companions; skill setter committing off the main flow;
+`edict_days_remaining` data source (left unpopulated — timer stays inert, as
+before). Redeploy `bin/Release/net35/CRPGBridge.dll` to the BepInEx plugins folder
+before live runs.
+
 ## Deferred (tracked as follow-ups)
 
 - Multi-instance (task #9) — v1 is single-instance per user decision.
