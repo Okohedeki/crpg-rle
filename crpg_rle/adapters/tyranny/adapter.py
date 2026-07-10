@@ -22,9 +22,12 @@ from crpg_rle.adapters.tyranny.mode_detect import detect_mode
 from crpg_rle.adapters.tyranny.state_schema import pack_state, state_vector_size
 
 # Keys the agent can emit (action-space key slot). Index 0 = no key.
-# Number keys drive dialogue option selection; Space pauses; Tab highlights.
+# Number keys drive dialogue option selection AND party-member selection (the game
+# interprets them by mode); Tab highlights. Pause (Space) is deliberately NOT
+# here: pausing/unpausing is env infrastructure, not an agent decision, so the
+# agent can never freeze the game in a pause loop.
 ACTION_KEYS: list[str] = [
-    "", "Escape", "Space", "Tab",
+    "", "Escape", "Tab",
     "Alpha1", "Alpha2", "Alpha3", "Alpha4", "Alpha5",
     "Alpha6", "Alpha7", "Alpha8", "Alpha9",
 ]
