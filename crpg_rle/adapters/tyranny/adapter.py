@@ -95,6 +95,46 @@ class TyrannyAdapter:
     def terminal(self, state: dict) -> tuple[bool, str | None, float]:
         return self.milestones.terminal(state)
 
+    # --- learning metrics ----------------------------------------------------
+    # Per-episode scalars surfaced to the trainer (PufferLib native logging). The
+    # order here defines the wire trailer + C Log field order; keep in sync with
+    # puffer_fork/ocean/tyranny/{tyranny.h,binding.c}.
+    LOG_METRIC_NAMES: list[str] = [
+        "r_milestone", "r_faction_favor", "milestones_reached",
+        "term_success", "term_failure", "term_timer",
+        "frac_combat", "frac_dialogue", "frac_overworld", "frac_levelup",
+    ]
+
+    def log_metric_names(self) -> list[str]:
+        return list(self.LOG_METRIC_NAMES)
+
+    def episode_metrics(self, summary: dict) -> dict[str, float]:
+        """Summarize a finished episode into the named scalars above.
+
+        ``summary`` (from the core) carries generic material only: mode_counts
+        (Mode int -> steps), ep_len, reward_channel_totals, terminal_kind.
+        """
+        totals = summary.get("reward_channel_totals") or {}
+        mode_counts = summary.get("mode_counts") or {}
+        ep_len = max(1, int(summary.get("ep_len") or 0))
+        kind = summary.get("terminal_kind")
+
+        def frac(mode: Mode) -> float:
+            return mode_counts.get(int(mode), 0) / ep_len
+
+        return {
+            "r_milestone": float(totals.get("milestone", 0.0)),
+            "r_faction_favor": float(totals.get("faction_favor", 0.0)),
+            "milestones_reached": float(len(self.milestones.fired)),
+            "term_success": 1.0 if kind == "success" else 0.0,
+            "term_failure": 1.0 if kind == "failure" else 0.0,
+            "term_timer": 1.0 if kind == "failure_timer" else 0.0,
+            "frac_combat": frac(Mode.COMBAT),
+            "frac_dialogue": frac(Mode.DIALOGUE),
+            "frac_overworld": frac(Mode.OVERWORLD),
+            "frac_levelup": frac(Mode.LEVEL_UP),
+        }
+
     # --- lifecycle -----------------------------------------------------------
     def reset(self, seed: int) -> dict:
         """Seed all env-owned randomness. Returns the per-episode config the

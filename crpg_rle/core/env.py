@@ -53,6 +53,7 @@ class CRPGEnv(gym.Env):
         self._bridge: TcpBridgeClient | None = None
         self._hwnd = None
         self._steps = 0
+        self._mode_counts: dict[int, int] = {}
         self._boot_ready = False
         self._run_initialized = False
         self._run_save: str | None = None
@@ -186,6 +187,7 @@ class CRPGEnv(gym.Env):
         episode_cfg = self.adapter.reset(seed)
         self.rewards.reset()
         self._steps = 0
+        self._mode_counts = {}
 
         if self.config.start_mode == "act1_save" and self.config.save_start:
             requested = (options or {}).get("build_spec", getattr(self.config, "build_spec", None))
@@ -237,6 +239,7 @@ class CRPGEnv(gym.Env):
         state = resp["state"]
         events = resp.get("events", [])
         mode = self.adapter.mode(state)
+        self._mode_counts[int(mode)] = self._mode_counts.get(int(mode), 0) + 1
 
         channel_deltas = self.adapter.reward(mode, events, state)
         scalar, weighted = self.rewards.step(channel_deltas)
@@ -258,10 +261,39 @@ class CRPGEnv(gym.Env):
             "milestones_fired": sorted(self.adapter.milestones.fired),
             "target_faction": self.adapter.target_faction,
         }
-        if done:
+        if done or truncated:
             info["terminal_kind"] = kind
             info["episode_reward_channels"] = self.rewards.episode_totals
+            info["log_metrics"] = self._episode_metrics(kind)
         return obs, scalar, done, truncated, info
+
+    # --------------------------------------------------------- learning metrics
+    def log_metric_names(self) -> list[str]:
+        """Ordered names of the per-episode learning metrics the adapter emits.
+
+        Game-agnostic: the core forwards whatever the adapter declares (empty if
+        the adapter declares none), so the env-server can size the wire trailer
+        and label the sidecar without knowing any game specifics.
+        """
+        names = getattr(self.adapter, "log_metric_names", None)
+        return list(names()) if callable(names) else []
+
+    def _episode_metrics(self, terminal_kind: str | None) -> dict[str, float]:
+        """Ask the adapter to summarize the finished episode into named scalars.
+
+        The core supplies only generic material (mode occupancy, length, the
+        weighted reward-channel totals, terminal kind); the adapter names and
+        computes the metrics. Returns {} when the adapter opts out.
+        """
+        summary = getattr(self.adapter, "episode_metrics", None)
+        if not callable(summary):
+            return {}
+        return dict(summary({
+            "mode_counts": dict(self._mode_counts),
+            "ep_len": self._steps,
+            "reward_channel_totals": self.rewards.episode_totals,
+            "terminal_kind": terminal_kind,
+        }))
 
     # ------------------------------------------------------------- obs build
     def _build_obs(self, state: dict) -> dict:

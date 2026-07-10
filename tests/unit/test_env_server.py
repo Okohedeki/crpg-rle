@@ -47,6 +47,19 @@ class DummyEnv(gym.Env):
         return self._obs(), reward, terminated, False, {}
 
 
+class MetricsEnv(DummyEnv):
+    """DummyEnv that also declares learning metrics (exercises the trailer)."""
+
+    def log_metric_names(self):
+        return ["a", "b", "c"]
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = super().step(action)
+        if terminated or truncated:
+            info["log_metrics"] = {"a": 1.5, "b": 2.5, "c": 3.5}
+        return obs, reward, terminated, truncated, info
+
+
 def _recv_exact(sock, n):
     buf = b""
     while len(buf) < n:
@@ -65,13 +78,14 @@ def test_env_server_protocol_roundtrip():
     time.sleep(0.3)
 
     sock = socket.create_connection(("127.0.0.1", 7731), timeout=5)
-    sock.sendall(MAGIC + struct.pack("<I", 1))
+    sock.sendall(MAGIC + struct.pack("<I", 2))
 
-    obs_size, n_actions, base_seed = struct.unpack("<IIQ", _recv_exact(sock, 16))
+    obs_size, n_actions, base_seed, n_extra = struct.unpack("<IIQI", _recv_exact(sock, 20))
     # dummy obs flat size: 4*4*3 + 5 + 1 + 6 = 60
     assert obs_size == 60
     assert n_actions == 4
     assert base_seed == 42
+    assert n_extra == 0  # DummyEnv declares no metrics
 
     first_obs = np.frombuffer(_recv_exact(sock, obs_size * 4), dtype=np.float32)
     assert first_obs.shape == (60,)
@@ -88,6 +102,34 @@ def test_env_server_protocol_roundtrip():
         if term:
             saw_terminal = True
     assert saw_terminal, "expected an episode terminal within 8 steps"
+    sock.close()
+
+
+def test_env_server_metrics_trailer():
+    env = MetricsEnv()
+    server = EnvServer(env, port=7732, base_seed=0)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    time.sleep(0.3)
+
+    sock = socket.create_connection(("127.0.0.1", 7732), timeout=5)
+    sock.sendall(MAGIC + struct.pack("<I", 2))
+    obs_size, n_actions, base_seed, n_extra = struct.unpack("<IIQI", _recv_exact(sock, 20))
+    assert n_extra == 3
+    _recv_exact(sock, obs_size * 4)  # first obs
+
+    saw_metrics = False
+    for _ in range(8):
+        sock.sendall(np.array([0, 0, 0, 0], dtype=np.int32).tobytes())
+        _recv_exact(sock, obs_size * 4)
+        reward, term, trunc = struct.unpack("<fBB", _recv_exact(sock, 6))
+        extra = np.frombuffer(_recv_exact(sock, n_extra * 4), dtype=np.float32)
+        if term or trunc:
+            assert list(extra) == [1.5, 2.5, 3.5], f"metrics trailer wrong: {extra}"
+            saw_metrics = True
+        else:
+            assert list(extra) == [0.0, 0.0, 0.0], "non-terminal trailer must be zero"
+    assert saw_metrics, "expected an episode terminal within 8 steps"
     sock.close()
 
 

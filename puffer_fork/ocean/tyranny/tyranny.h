@@ -30,8 +30,24 @@ typedef struct {
     float score;
     float episode_return;
     float episode_length;
+    // Per-episode learning metrics (order matches env_server's log_metrics /
+    // TyrannyAdapter.LOG_METRIC_NAMES). PufferLib divides these sums by n.
+    float r_milestone;
+    float r_faction_favor;
+    float milestones_reached;
+    float term_success;
+    float term_failure;
+    float term_timer;
+    float frac_combat;
+    float frac_dialogue;
+    float frac_overworld;
+    float frac_levelup;
     float n;
 } Log;
+
+// Number of float metrics in the per-step trailer (must equal len of
+// TyrannyAdapter.LOG_METRIC_NAMES / env_server n_extra).
+#define TY_N_EXTRA 10
 
 typedef struct {
     Log log;                     // required
@@ -44,6 +60,7 @@ typedef struct {
     int sockfd;
     int obs_size;
     int n_actions;
+    int n_extra;
     int port;
     char host[64];
     float ep_return;
@@ -93,13 +110,15 @@ static void ty_connect(Tyranny* env) {
     send_all(env->sockfd, "CRPG", 4);
     unsigned int proto = 1;
     send_all(env->sockfd, &proto, 4);
-    unsigned int obs_size = 0, n_actions = 0;
+    unsigned int obs_size = 0, n_actions = 0, n_extra = 0;
     unsigned long long base_seed = 0;
     recv_all(env->sockfd, &obs_size, 4);
     recv_all(env->sockfd, &n_actions, 4);
     recv_all(env->sockfd, &base_seed, 8);
+    recv_all(env->sockfd, &n_extra, 4);
     env->obs_size = (int)obs_size;
     env->n_actions = (int)n_actions;
+    env->n_extra = (int)n_extra;
     // first obs
     recv_all(env->sockfd, env->observations, env->obs_size * (int)sizeof(float));
 }
@@ -122,6 +141,14 @@ void c_step(Tyranny* env) {
     recv_all(env->sockfd, &term, 1);
     recv_all(env->sockfd, &trunc, 1);
 
+    // Per-step learning-metric trailer (zeros except on the episode-ending step).
+    float extra[TY_N_EXTRA];
+    memset(extra, 0, sizeof(extra));
+    if (env->n_extra > 0) {
+        int n = env->n_extra < TY_N_EXTRA ? env->n_extra : TY_N_EXTRA;
+        recv_all(env->sockfd, extra, n * (int)sizeof(float));
+    }
+
     env->rewards[0] = reward;
     env->terminals[0] = term;
     env->ep_return += reward;
@@ -130,6 +157,16 @@ void c_step(Tyranny* env) {
         env->log.episode_return += env->ep_return;
         env->log.episode_length += env->ep_len;
         env->log.score += env->ep_return;
+        env->log.r_milestone += extra[0];
+        env->log.r_faction_favor += extra[1];
+        env->log.milestones_reached += extra[2];
+        env->log.term_success += extra[3];
+        env->log.term_failure += extra[4];
+        env->log.term_timer += extra[5];
+        env->log.frac_combat += extra[6];
+        env->log.frac_dialogue += extra[7];
+        env->log.frac_overworld += extra[8];
+        env->log.frac_levelup += extra[9];
         env->log.n += 1;
         env->ep_return = 0;
         env->ep_len = 0;

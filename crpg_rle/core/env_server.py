@@ -9,14 +9,19 @@ reward + terminal frame. All game logic stays in the injected env (Python).
 
 Protocol (little-endian, one client):
   handshake:  client -> {magic 'CRPG', proto u32}
-              server -> {obs_size u32, n_actions u32, base_seed u64}
+              server -> {obs_size u32, n_actions u32, base_seed u64, n_extra u32}
   step:       client -> int32[n_actions] actions
-              server -> float32[obs_size] obs, float32 reward, u8 terminal, u8 truncated
-  On terminal the server auto-resets (seed = base_seed + episode_index) and the
-  returned obs is the first obs of the next episode (4.0's in-c_step reset model).
+              server -> float32[obs_size] obs, float32 reward, u8 terminal,
+                        u8 truncated, float32[n_extra] log_metrics
+  The log_metrics trailer is all-zero except on the step that ends an episode,
+  where it carries that episode's per-metric aggregates (named by the sidecar's
+  "log_metrics" list). On terminal the server auto-resets (seed = base_seed +
+  episode_index) and the returned obs is the first obs of the next episode
+  (4.0's in-c_step reset model).
 
-The flat obs is the CRPGEnv Dict flattened deterministically; the layout is
-written to a sidecar JSON so the policy can slice it back.
+The flat obs is the CRPGEnv Dict flattened deterministically; the layout (and
+the ordered log-metric names) is written to a sidecar JSON so the policy/shim
+can slice it back. Proto is 2 (the n_extra trailer); the shim must match.
 """
 from __future__ import annotations
 
@@ -102,23 +107,40 @@ class EnvServer:
         obs, _info = self.env.reset(seed=self.base_seed)
         flat = flatten_obs(obs)
         n_actions = int(np.asarray(self.env.action_space.nvec).size)
+        names = self._log_metric_names()
+        n_extra = len(names)
+        zeros_extra = np.zeros(n_extra, dtype=np.float32)
 
         if self.layout_path:
             with open(self.layout_path, "w") as f:
                 json.dump({"obs_size": int(flat.size), "n_actions": n_actions,
+                           "n_extra": n_extra, "log_metrics": names,
                            "layout": obs_layout(obs)}, f, indent=2)
 
-        conn.sendall(struct.pack("<IIQ", int(flat.size), n_actions, self.base_seed & ((1 << 64) - 1)))
+        conn.sendall(struct.pack("<IIQI", int(flat.size), n_actions,
+                                 self.base_seed & ((1 << 64) - 1), n_extra))
         conn.sendall(flat.tobytes())
 
         while True:
             raw = self._recv_exact(conn, 4 * n_actions)
             actions = np.frombuffer(raw, dtype=np.int32)
-            obs, reward, terminated, truncated, _info = self.env.step(actions)
+            obs, reward, terminated, truncated, step_info = self.env.step(actions)
             done = bool(terminated or truncated)
+            extra = self._pack_extra(step_info, names) if done else zeros_extra
             if done:
                 self._episode += 1
                 obs, _info = self.env.reset(seed=self.base_seed + self._episode)
             flat = flatten_obs(obs)
             conn.sendall(flat.tobytes())
             conn.sendall(struct.pack("<fBB", float(reward), 1 if terminated else 0, 1 if truncated else 0))
+            if n_extra:
+                conn.sendall(extra.tobytes())
+
+    def _log_metric_names(self) -> list[str]:
+        getter = getattr(self.env, "log_metric_names", None)
+        return list(getter()) if callable(getter) else []
+
+    @staticmethod
+    def _pack_extra(info: dict, names: list[str]) -> np.ndarray:
+        metrics = (info or {}).get("log_metrics") or {}
+        return np.asarray([float(metrics.get(name, 0.0)) for name in names], dtype=np.float32)

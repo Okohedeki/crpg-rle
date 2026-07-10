@@ -26,4 +26,14 @@ void my_log(Log* log, Dict* out) {
     dict_set(out, "score", log->score);
     dict_set(out, "episode_return", log->episode_return);
     dict_set(out, "episode_length", log->episode_length);
+    dict_set(out, "r_milestone", log->r_milestone);
+    dict_set(out, "r_faction_favor", log->r_faction_favor);
+    dict_set(out, "milestones_reached", log->milestones_reached);
+    dict_set(out, "term_success", log->term_success);
+    dict_set(out, "term_failure", log->term_failure);
+    dict_set(out, "term_timer", log->term_timer);
+    dict_set(out, "frac_combat", log->frac_combat);
+    dict_set(out, "frac_dialogue", log->frac_dialogue);
+    dict_set(out, "frac_overworld", log->frac_overworld);
+    dict_set(out, "frac_levelup", log->frac_levelup);
 }

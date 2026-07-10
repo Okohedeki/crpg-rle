@@ -14,6 +14,7 @@ int main(int argc, char** argv) {
     strcpy(env.host, "127.0.0.1");
     env.obs_size = DEMO_OBS;
     env.n_actions = DEMO_ATNS;
+    env.n_extra = TY_N_EXTRA;  // overwritten by the handshake in ty_connect
 
     env.observations = (float*)calloc(DEMO_OBS, sizeof(float));
     env.actions = (int*)calloc(DEMO_ATNS, sizeof(int));
