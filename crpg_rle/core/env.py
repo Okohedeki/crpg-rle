@@ -56,6 +56,7 @@ class CRPGEnv(gym.Env):
         self._mode_counts: dict[int, int] = {}
         self._boot_ready = False
         self._dialogue_preloaded = False
+        self._bridge_dead = False
         self._run_initialized = False
         self._run_save: str | None = None
         self._run_build_spec: dict | None = None
@@ -78,6 +79,22 @@ class CRPGEnv(gym.Env):
         self._bridge.connect()
         self._bridge.handshake()
         self._bridge.request("speed", time_scale=self.config.time_scale, uncap_fps=self.config.time_scale > 1.0)
+
+    def _relaunch(self) -> None:
+        """Recover from a dead bridge (game crash / plugin swept on reload) by
+        tearing down and relaunching the game. The run save persists, so the next
+        _load_game restores the frozen build; only the process is rebuilt."""
+        logger.warning("bridge died — relaunching the game and reloading the run save")
+        if self._bridge is not None:
+            self._bridge.close()
+            self._bridge = None
+        if self._proc is not None:
+            self._proc.kill()
+            self._proc = None
+        self._hwnd = None
+        self._boot_ready = False
+        self._dialogue_preloaded = False
+        self._bridge_dead = False
 
     def _wait_menu(self, timeout: float = 120.0) -> None:
         deadline = time.time() + timeout
@@ -201,6 +218,8 @@ class CRPGEnv(gym.Env):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
         seed = seed if seed is not None else 0
+        if self._bridge_dead:
+            self._relaunch()
         self._ensure_process()
 
         episode_cfg = self.adapter.reset(seed)
@@ -255,7 +274,8 @@ class CRPGEnv(gym.Env):
             self._bridge.act(inputs, frames=self.config.frame_skip)
             resp = self._bridge.observe()
         except BridgeDied:
-            logger.warning("bridge died mid-step; terminating episode")
+            logger.warning("bridge died mid-step; ending episode (will relaunch on reset)")
+            self._bridge_dead = True
             blank = self._blank_obs()
             return blank, 0.0, True, False, {"bridge_died": True}
 

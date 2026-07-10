@@ -121,6 +121,7 @@ class PPOTrainer:
             "values": np.asarray(val_buf, dtype=np.float32),
             "adv": adv, "returns": returns,
             "channel_sums": dict(channel_sums),
+            "rollout_reward": float(np.sum(rew_buf)),
         }
 
     def update(self, batch) -> dict:
@@ -194,6 +195,7 @@ class PPOTrainer:
             mean_ret = float(np.mean(self._ep_returns)) if self._ep_returns else float("nan")
             row = {
                 "update": update, "step": self._global_step,
+                "rollout_reward": batch["rollout_reward"],
                 "ep_return": mean_ret, "n_ep": len(self._ep_returns),
                 "pg_loss": stats["pg_loss"], "v_loss": stats["v_loss"],
                 "entropy": stats["entropy"], "approx_kl": stats["approx_kl"],
