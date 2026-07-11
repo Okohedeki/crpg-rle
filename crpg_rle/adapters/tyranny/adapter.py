@@ -228,6 +228,12 @@ class TyrannyAdapter:
         acted, else None. All game-specific logic lives in the ConfigDriver."""
         return self.config_driver.on_step(bridge, state, events)
 
+    def interventions_drain(self) -> list[dict]:
+        """Core hook: structured log of scripted-infrastructure actions taken
+        since the last drain (revive, recenter, auto-unpause, level-up driving).
+        The core surfaces these in info["interventions"]."""
+        return self.config_driver.interventions_drain()
+
     # --- learning metrics ----------------------------------------------------
     # Per-episode scalars surfaced to the trainer (PufferLib native logging). The
     # order here defines the wire trailer + C Log field order; keep in sync with

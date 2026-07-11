@@ -40,15 +40,35 @@ class ConfigDriver:
         self._paused_steps = 0
         self._unpause_attempts = 0
         self._offscreen_steps = 0
+        # Intervention log: every scripted-infrastructure action, recorded as a
+        # structured entry and drained by the consumer (env → info["interventions"]).
+        # ``seq`` is a driver-lifetime counter (step-agnostic, never reset) so
+        # entries stay totally ordered across episodes.
+        self._interventions: list[dict] = []
+        self._seq = 0
 
     def reset(self) -> None:
-        """Per-episode reset of trigger bookkeeping (config itself is frozen)."""
+        """Per-episode reset of trigger bookkeeping (config itself is frozen).
+        The intervention log and its seq counter survive resets: undrained
+        entries are real actions that already happened."""
         self._levels_done = set()
         self._pending_penalty = 0.0
         self._was_dead = False
         self._paused_steps = 0
         self._unpause_attempts = 0
         self._offscreen_steps = 0
+
+    # ------------------------------------------------------------ interventions
+    def _record(self, kind: str, **detail) -> None:
+        """Append one structured intervention entry {seq, kind, detail}."""
+        self._seq += 1
+        self._interventions.append({"seq": self._seq, "kind": kind, "detail": detail})
+        logger.info("intervention #%d: %s %s", self._seq, kind, detail)
+
+    def interventions_drain(self) -> list[dict]:
+        """Return all interventions recorded since the last drain, clearing them."""
+        drained, self._interventions = self._interventions, []
+        return drained
 
     def take_death_penalty(self) -> float:
         """Consume any pending MC-death penalty (added to the reward this step).
@@ -86,13 +106,17 @@ class ConfigDriver:
             return False
         key = "Space" if self._unpause_attempts % 2 == 0 else "Escape"
         self._unpause_attempts += 1
+        stuck_for = self._paused_steps
         try:
             bridge.request("act", inputs=[{"t": "key", "key": key, "action": "press"}],
                            frames=2)
             self._paused_steps = 0
+            self._record("auto_unpause", key=key, paused_steps=stuck_for)
             return True
         except Exception as exc:
             logger.warning("auto-unpause (%s) failed: %s", key, exc)
+            self._record("auto_unpause", key=key, paused_steps=stuck_for,
+                         ok=False, error=str(exc))
             return False
 
     # ------------------------------------------------- camera backstop (infra)
@@ -106,12 +130,16 @@ class ConfigDriver:
         self._offscreen_steps += 1
         if self.offscreen_recenter_steps <= 0 or self._offscreen_steps < self.offscreen_recenter_steps:
             return False
+        offscreen_for = self._offscreen_steps
         try:
             bridge.request("recenter")
             self._offscreen_steps = 0
+            self._record("camera_recenter", offscreen_steps=offscreen_for)
             return True
         except Exception as exc:
             logger.warning("camera recenter failed: %s", exc)
+            self._record("camera_recenter", offscreen_steps=offscreen_for,
+                         ok=False, error=str(exc))
             return False
 
     # ------------------------------------------------------------- level-up (W4)
@@ -147,8 +175,12 @@ class ConfigDriver:
                     continue
                 self._drive_levelup(bridge, self.levelup_plan_for(target_level))
                 acted = True
+                self._record("levelup", slot=slot, target_level=target_level,
+                             planned=self.levelup_plan_for(target_level) is not None)
             except Exception as exc:  # a level-up hiccup must not crash the episode
                 logger.warning("level-up for slot %d failed: %s", slot, exc)
+                self._record("levelup", slot=slot, target_level=target_level,
+                             ok=False, error=str(exc))
         return acted
 
     def _drive_levelup(self, bridge, plan: dict | None, max_stages: int = 8) -> None:
@@ -195,10 +227,14 @@ class ConfigDriver:
         try:
             if self.death_mode == "checkpoint" and self.checkpoint_save:
                 bridge.request("load", file=self.checkpoint_save)
+                self._record("death_checkpoint", file=self.checkpoint_save)
             else:
                 bridge.request("revive")
+                self._record("death_revive")
             self._was_dead = False  # revived — ready to detect the next death
             return True
         except Exception as exc:
             logger.warning("death recovery (%s) failed: %s", self.death_mode, exc)
+            self._record("death_recovery", mode=self.death_mode,
+                         ok=False, error=str(exc))
             return False

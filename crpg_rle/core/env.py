@@ -335,7 +335,19 @@ class CRPGEnv(gym.Env):
             "reward_channels": weighted,
             "milestones_fired": sorted(self.adapter.milestones.fired),
             "target_faction": self.adapter.target_faction,
+            # Generic pass-throughs for observability (replay/dashboard): the
+            # drained engine events and, when the adapter keeps one, the log of
+            # scripted-infrastructure interventions taken since the last step.
+            "events": events,
         }
+        drain = getattr(self.adapter, "interventions_drain", None)
+        if callable(drain):
+            interventions = drain()
+            if interventions:
+                info["interventions"] = interventions
+        party = state.get("party")
+        if party:
+            info["party"] = party
         if done or truncated:
             info["terminal_kind"] = kind
             info["episode_reward_channels"] = self.rewards.episode_totals
