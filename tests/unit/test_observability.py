@@ -278,3 +278,47 @@ def test_ppo_trainer_drives_observer(tmp_path):
     first = json.loads(replays[0].read_text(encoding="utf-8").splitlines()[0])
     assert set(first) >= {"t", "action", "mode", "reward", "reward_channels",
                           "events", "interventions"}
+
+
+# ------------------------------------------------------------ dashboard HTTP
+def test_dashboard_serves_page_status_and_csv(tmp_path):
+    import json
+    import sys
+    import threading
+    import urllib.request
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+    try:
+        import dashboard
+    finally:
+        sys.path.pop(0)
+
+    (tmp_path / "live_status.json").write_text(
+        json.dumps({"global_step": 7, "mode_name": "DIALOGUE",
+                    "csv": str(tmp_path / "run.csv")}), encoding="utf-8")
+    (tmp_path / "run.csv").write_text("update,step,pg_loss\n1,512,-0.02\n",
+                                      encoding="utf-8")
+
+    httpd = dashboard.serve(tmp_path, port=0)  # port 0: OS picks a free one
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_address[1]}"
+        page = urllib.request.urlopen(f"{base}/", timeout=5).read().decode("utf-8")
+        assert "<title>crpg-rle live run</title>" in page
+        assert "cdn" not in page.lower()  # self-contained: no external scripts
+        status = json.loads(urllib.request.urlopen(
+            f"{base}/status.json", timeout=5).read().decode("utf-8"))
+        assert status["global_step"] == 7
+        csv = urllib.request.urlopen(f"{base}/csv", timeout=5).read().decode("utf-8")
+        assert csv.startswith("update,step,pg_loss")
+        import urllib.error
+        try:
+            urllib.request.urlopen(f"{base}/../secrets", timeout=5)
+            assert False, "unknown route must 404"
+        except urllib.error.HTTPError as err:
+            assert err.code == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
