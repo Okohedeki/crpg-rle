@@ -67,6 +67,8 @@ class TyrannyAdapter:
         self._visited_cells: set = set()
         self._last_pause_time = 0.0
         self._tactical_rewarded = False
+        self._seen_conversations: set = set()
+        self._seen_areas: set = set()
         self.config_driver = ConfigDriver(
             self.validate_build_spec(self.config.build_spec),
             death_mode=getattr(self.config, "death_mode", "terminal"),
@@ -118,8 +120,37 @@ class TyrannyAdapter:
         explore_r = self._exploration_reward(state)
         pause_r = self._pause_reward(state, action)
         offscreen_r = self._offscreen_reward(state)
+        objective_r = self._objective_reward(events)
         return {"milestone": milestone_r, "faction_favor": favor_r, "death": death_r,
-                "explore": explore_r, "pause": pause_r, "offscreen": offscreen_r}
+                "explore": explore_r, "pause": pause_r, "offscreen": offscreen_r,
+                "objective": objective_r}
+
+    def _objective_reward(self, events: list[dict]) -> float:
+        """Micro-objectives: reward game-recognized progress toward goals. The
+        quest system is the oracle — quest started/advanced/completed events only
+        fire when an interaction genuinely moved a quest forward. First-time
+        conversations and area transitions (per episode) also count: they are how
+        overworld object/NPC interaction manifests as progress."""
+        r = 0.0
+        for ev in events:
+            t = ev.get("type")
+            if t == "quest":
+                kind = ev.get("event")
+                if kind == "started":
+                    r += float(self.config.quest_started_bonus)
+                elif kind in ("advanced", "completed"):
+                    r += float(self.config.quest_progress_bonus)
+            elif t == "conversation" and ev.get("event") == "start":
+                key = (ev.get("file") or "").lower()
+                if key and key not in self._seen_conversations:
+                    self._seen_conversations.add(key)
+                    r += float(self.config.new_conversation_bonus)
+            elif t == "area" and ev.get("event") == "loaded":
+                key = (ev.get("area") or "").lower()
+                if key and key not in self._seen_areas:
+                    self._seen_areas.add(key)
+                    r += float(self.config.new_area_bonus)
+        return r
 
     def _player_pos(self, state: dict):
         party = state.get("party") or []
@@ -255,6 +286,8 @@ class TyrannyAdapter:
         self._visited_cells = set()
         self._last_pause_time = 0.0
         self._tactical_rewarded = False
+        self._seen_conversations = set()
+        self._seen_areas = set()
         return {"target_faction": self._target_faction, "dialogue_seed": dialogue_seed}
 
     def validate_build_spec(self, spec: dict | None) -> dict | None:

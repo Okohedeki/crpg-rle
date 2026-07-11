@@ -110,6 +110,25 @@ def test_offscreen_recenter_backstop():
     assert d._offscreen_steps == 0             # visible resets the counter
 
 
+def test_objective_reward_micro_progress():
+    a = TyrannyAdapter(TyrannyConfig(quest_started_bonus=0.25, quest_progress_bonus=0.5,
+                                     new_conversation_bonus=0.1, new_area_bonus=0.25))
+    a.reset(0)
+    events = [
+        {"type": "quest", "event": "started", "quest": "q1"},
+        {"type": "quest", "event": "advanced", "quest": "q1"},
+        {"type": "conversation", "event": "start", "file": "cv_a"},
+        {"type": "area", "event": "loaded", "area": "AR_08"},
+    ]
+    assert abs(a.reward(Mode.OVERWORLD, events, _state())["objective"] - 1.1) < 1e-9
+    # repeats of the same conversation/area earn nothing; quest events trust the engine
+    assert a._objective_reward([{"type": "conversation", "event": "start", "file": "cv_a"},
+                                {"type": "area", "event": "loaded", "area": "AR_08"}]) == 0.0
+    # fresh episode rearms the dedupe
+    a.reset(1)
+    assert a._objective_reward([{"type": "conversation", "event": "start", "file": "cv_a"}]) == 0.1
+
+
 def test_action_stats_summary():
     from crpg_rle.train.buffer import action_stats
     actions = np.array([[0, 0, 2, 0], [1, 1, 2, 0], [0, 0, 0, 5]])

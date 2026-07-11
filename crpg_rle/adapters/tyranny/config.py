@@ -45,9 +45,17 @@ class TyrannyConfig:
     reward_weights: dict[str, float] = field(
         default_factory=lambda: {
             "milestone": 1.0, "faction_favor": 1.0, "death": 1.0,
-            "explore": 1.0, "pause": 1.0, "offscreen": 1.0,
+            "explore": 1.0, "pause": 1.0, "offscreen": 1.0, "objective": 1.0,
         }
     )
+
+    # Micro-objective shaping: reward game-recognized progress events (the quest
+    # system is the goal-progress oracle — these only fire when an interaction
+    # actually advances something, so they aren't farmable by random clicking).
+    quest_started_bonus: float = 0.25
+    quest_progress_bonus: float = 0.5     # quest advanced/completed
+    new_conversation_bonus: float = 0.1   # first time a conversation file opens
+    new_area_bonus: float = 0.25          # first time an area loads (per episode)
 
     # Exploration shaping (count-based novelty — drives movement toward new ground
     # without being gameable by jittering, since each cell is rewarded once/episode).
