@@ -162,3 +162,119 @@ def test_env_step_surfaces_party_when_present():
     env2 = _stub_env(party=[])
     _, _, _, _, info2 = env2.step([0, 0, 0, 0])
     assert "party" not in info2
+
+
+# ----------------------------------------------------------- replay recorder
+def _fake_info(mode=5, channels=None, events=None, interventions=None):
+    info = {"mode": mode, "reward_channels": channels or {"milestone": 0.0},
+            "events": events or [], "target_faction": "ScarletChorus",
+            "milestones_fired": []}
+    if interventions:
+        info["interventions"] = interventions
+    return info
+
+
+def test_replay_recorder_writes_valid_jsonl_and_rolls_episodes(tmp_path):
+    import json
+
+    from crpg_rle.train.observer import ReplayRecorder
+
+    rec = ReplayRecorder(tmp_path)
+    a = np.array([3, 4, 1, 2])
+    rec.on_step(None, a, 0.5, _fake_info(events=[{"type": "quest", "event": "started"}]))
+    rec.on_step(None, a, -0.1,
+                _fake_info(interventions=[{"seq": 1, "kind": "auto_unpause", "detail": {}}]),
+                terminated=True)
+    rec.on_step(None, a, 0.0, _fake_info())  # first step of episode 2
+    rec.close()
+
+    ep1 = (tmp_path / "replay_ep1.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(ep1) == 2
+    lines = [json.loads(l) for l in ep1]
+    assert lines[0] == {"t": 0, "action": [3, 4, 1, 2], "mode": 5, "reward": 0.5,
+                        "reward_channels": {"milestone": 0.0},
+                        "events": [{"type": "quest", "event": "started"}],
+                        "interventions": []}
+    assert lines[1]["t"] == 1
+    assert lines[1]["done"] == "terminated"
+    assert lines[1]["interventions"][0]["kind"] == "auto_unpause"
+    ep2 = (tmp_path / "replay_ep2.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(ep2[0])["t"] == 0
+
+
+# -------------------------------------------------------------- status writer
+def test_status_writer_atomic_json(tmp_path):
+    import json
+
+    from crpg_rle.train.observer import StatusWriter
+
+    sw = StatusWriter(tmp_path, key_names=["", "Tab", "Alpha1"], min_interval=0.0)
+    a = np.array([1, 2, 2, 1])  # right-click + Tab
+    sw.on_step(None, a, 1.5, _fake_info(
+        channels={"milestone": 1.0, "faction_favor": 0.5},
+        events=[{"type": "area", "event": "loaded", "area": "Edgering"}],
+        interventions=[{"seq": 1, "kind": "camera_recenter", "detail": {}}]))
+    path = tmp_path / "live_status.json"
+    assert path.exists()
+    assert not (tmp_path / "live_status.json.tmp").exists()  # temp cleaned up
+    status = json.loads(path.read_text(encoding="utf-8"))
+    assert status["global_step"] == 1
+    assert status["mode_name"] == "OVERWORLD"
+    assert status["rollout"]["channels"] == {"milestone": 1.0, "faction_favor": 0.5}
+    assert status["actions"]["buttons"] == {"right": 1}
+    assert status["actions"]["keys"] == {"Tab": 1}
+    assert status["recent_events"][0]["area"] == "Edgering"
+    assert status["recent_interventions"][0]["kind"] == "camera_recenter"
+    assert status["target_faction"] == "ScarletChorus"
+
+    # update resets rollout accumulators and records training metrics
+    sw.on_update({"update": 1, "pg_loss": -0.01, "entropy": 9.9})
+    status = json.loads(path.read_text(encoding="utf-8"))
+    assert status["update"] == 1
+    assert status["last_update"]["pg_loss"] == -0.01
+    assert status["rollout"]["channels"] == {}
+    assert status["actions"]["keys"] == {}
+    # ...but run-scoped history persists
+    assert status["recent_interventions"][0]["kind"] == "camera_recenter"
+
+
+def test_status_writer_episode_rollover(tmp_path):
+    import json
+
+    from crpg_rle.train.observer import StatusWriter
+
+    sw = StatusWriter(tmp_path, min_interval=0.0)
+    a = np.array([0, 0, 0, 0])
+    sw.on_step(None, a, 1.0, _fake_info())
+    sw.on_step(None, a, 2.0, _fake_info(), truncated=True)
+    status = json.loads((tmp_path / "live_status.json").read_text(encoding="utf-8"))
+    assert status["episode"] == 2
+    assert status["t_in_episode"] == 0
+    assert status["last_ep_reward"] == 3.0
+    assert status["ep_reward"] == 0.0
+
+
+def test_ppo_trainer_drives_observer(tmp_path):
+    import json
+
+    pytest_torch = __import__("pytest").importorskip("torch")  # noqa: F841
+
+    from crpg_rle.train.observer import make_observer
+    from crpg_rle.train.ppo import PPOConfig, PPOTrainer
+    from crpg_rle.train.proxy_env import ProxyCRPGEnv
+
+    env = ProxyCRPGEnv(obs_size=36, episode_len=8)
+    obs = make_observer(tmp_path, key_names=[f"K{i}" for i in range(13)])
+    cfg = PPOConfig(total_steps=32, rollout_steps=32, epochs=1, minibatches=2)
+    PPOTrainer(env, cfg, device="cpu", observer=obs).train()
+    obs.close()
+
+    status = json.loads((tmp_path / "live_status.json").read_text(encoding="utf-8"))
+    assert status["global_step"] == 32
+    assert status["update"] == 1
+    assert "pg_loss" in status["last_update"]
+    replays = sorted(tmp_path.glob("replay_ep*.jsonl"))
+    assert len(replays) >= 4  # 32 steps / 8-step episodes
+    first = json.loads(replays[0].read_text(encoding="utf-8").splitlines()[0])
+    assert set(first) >= {"t", "action", "mode", "reward", "reward_channels",
+                          "events", "interventions"}

@@ -10,9 +10,11 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from crpg_rle.train.buffer import Logger
 from crpg_rle.train.grpo import GRPOConfig, GRPOTrainer
+from crpg_rle.train.observer import make_observer
 from crpg_rle.train.ppo import PPOConfig, PPOTrainer
 from crpg_rle.train.proxy_env import ProxyCRPGEnv
 
@@ -46,6 +48,14 @@ def main() -> None:
     ap.add_argument("--sparse", action="store_true", help="proxy: reward only on the last step")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--csv", default=None, help="write per-update metrics to this CSV")
+    ap.add_argument("--status-dir", default=None,
+                    help="run-observability dir: live_status.json + replay_ep<N>.jsonl "
+                         "(default: <csv path minus .csv>/ when --csv is set; "
+                         "watch with: python tools/dashboard.py --dir <dir>)")
+    ap.add_argument("--status-every", type=int, default=1,
+                    help="write live_status.json at most every N steps (time-throttled)")
+    ap.add_argument("--no-observer", action="store_true",
+                    help="disable the replay/status observer even when --csv is set")
     ap.add_argument("--seed", type=int, default=0)
     # live-only
     ap.add_argument("--save", default=None)
@@ -55,17 +65,34 @@ def main() -> None:
 
     env = make_env(args)
     logger = Logger(args.csv)
+
+    # Run observability (replay JSONL + live_status.json for tools/dashboard.py).
+    status_dir = args.status_dir
+    if status_dir is None and args.csv and not args.no_observer:
+        status_dir = str(Path(args.csv).with_suffix(""))
+    observer = None
+    if status_dir and not args.no_observer:
+        adapter = getattr(env, "adapter", None)
+        key_names = adapter.action_key_list() if adapter is not None else None
+        observer = make_observer(status_dir, csv_path=args.csv,
+                                 key_names=key_names, every=args.status_every)
+        print(f"observer: status+replay -> {status_dir}  "
+              f"(dashboard: python tools/dashboard.py --dir {status_dir})")
+
     try:
         if args.algo == "ppo":
             cfg = PPOConfig(total_steps=args.steps, seed=args.seed,
                             rollout_steps=args.rollout_steps)
-            PPOTrainer(env, cfg, device=args.device, logger=logger).train()
+            PPOTrainer(env, cfg, device=args.device, logger=logger,
+                       observer=observer).train()
         else:
             cfg = GRPOConfig(total_steps=args.steps, seed=args.seed,
                              max_episode_steps=args.episode_len)
             GRPOTrainer(env, cfg, device=args.device, logger=logger).train()
     finally:
         logger.close()
+        if observer is not None:
+            observer.close()
         close = getattr(env, "close", None)
         if callable(close):
             close()

@@ -40,13 +40,17 @@ class PPOConfig:
 
 
 class PPOTrainer:
-    def __init__(self, env, config: PPOConfig, device: str = "cuda", logger: Logger | None = None):
+    def __init__(self, env, config: PPOConfig, device: str = "cuda", logger: Logger | None = None,
+                 observer=None):
         self.env = env
         self.cfg = config
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.policy = MultiInputActorCritic(env.observation_space, env.action_space.nvec).to(self.device)
         self.opt = torch.optim.Adam(self.policy.parameters(), lr=config.lr, eps=1e-5)
         self.logger = logger or Logger()
+        # Optional RunObserver (replay JSONL + live dashboard status): called with
+        # every transition and every finished update row. Duck-typed, no-op if None.
+        self.observer = observer
         self.ret_rms = RunningMeanStd()
         self._obs, _ = env.reset(seed=config.seed)
         self._ep_return = 0.0
@@ -77,6 +81,8 @@ class PPOTrainer:
             for ch, val in (info.get("reward_channels") or {}).items():
                 channel_sums[ch] += float(val)
             done = bool(terminated or truncated)
+            if self.observer is not None:
+                self.observer.on_step(obs, a, reward, info, terminated, truncated)
 
             obs_buf.append(obs)
             act_buf.append(a)
@@ -204,3 +210,5 @@ class PPOTrainer:
             row.update({f"r_{k}": v for k, v in batch["channel_sums"].items()})  # per-channel reward
             row.update(action_stats(batch["actions"]))                          # actions taken
             self.logger.log(row)
+            if self.observer is not None:
+                self.observer.on_update(row)
