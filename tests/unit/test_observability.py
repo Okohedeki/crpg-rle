@@ -272,6 +272,7 @@ def test_ppo_trainer_drives_observer(tmp_path):
     status = json.loads((tmp_path / "live_status.json").read_text(encoding="utf-8"))
     assert status["global_step"] == 32
     assert status["update"] == 1
+    assert status["mode_name"] == "DIALOGUE"  # proxy carries mode in obs, not info
     assert "pg_loss" in status["last_update"]
     replays = sorted(tmp_path.glob("replay_ep*.jsonl"))
     assert len(replays) >= 4  # 32 steps / 8-step episodes

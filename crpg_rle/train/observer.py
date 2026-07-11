@@ -52,6 +52,14 @@ def _mode_name(mode) -> str | None:
         return None
 
 
+def _mode_of(obs, info) -> object:
+    """Mode from info (live env) falling back to the observation (proxy env)."""
+    mode = (info or {}).get("mode")
+    if mode is None and isinstance(obs, dict):
+        mode = obs.get("mode")
+    return mode
+
+
 class ReplayRecorder:
     """Per-episode JSONL stream: one line per step, one file per episode."""
 
@@ -75,7 +83,7 @@ class ReplayRecorder:
         line = {
             "t": self._t,
             "action": _jsonable(action),
-            "mode": _jsonable(info.get("mode")),
+            "mode": _jsonable(_mode_of(obs, info)),
             "reward": float(reward),
             "reward_channels": _jsonable(info.get("reward_channels") or {}),
             "events": _jsonable(info.get("events") or []),
@@ -151,7 +159,7 @@ class StatusWriter:
         self.rollout_steps += 1
         self.ep_reward += float(reward)
         self.rollout_reward += float(reward)
-        self.mode = info.get("mode")
+        self.mode = _mode_of(obs, info)
         self.target_faction = info.get("target_faction", self.target_faction)
         if info.get("milestones_fired") is not None:
             self.milestones = list(info["milestones_fired"])
