@@ -65,6 +65,9 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--stochastic", action="store_true",
                     help="sample actions instead of taking the argmax (trained policy)")
+    ap.add_argument("--reload", action="store_true",
+                    help="reload the checkpoint before each episode (watch it improve "
+                         "live while training writes new checkpoints)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--gif", default=None, help="record frames to this GIF instead of a window")
     ap.add_argument("--fps", type=int, default=8)
@@ -79,13 +82,35 @@ def main() -> None:
     )
     env.metadata["render_fps"] = args.fps
 
+    reload_state = {"mtime": None, "act": None}
+
+    def act_for_episode():
+        """Return the current act fn, reloading the checkpoint if it changed."""
+        if not args.checkpoint:
+            return reload_state["act"]
+        if reload_state["act"] is None or args.reload:
+            try:
+                mtime = Path(args.checkpoint).stat().st_mtime
+            except OSError:
+                mtime = None
+            if reload_state["act"] is None or (mtime is not None and mtime != reload_state["mtime"]):
+                try:
+                    reload_state["act"] = _load_policy(
+                        args.checkpoint, env.observation_space, args.device)
+                    reload_state["mtime"] = mtime
+                except Exception as e:  # keep the old policy on a torn/failed read
+                    if reload_state["act"] is None:
+                        raise
+                    print(f"  (reload skipped: {e})")
+        return reload_state["act"]
+
     if args.checkpoint:
-        act = _load_policy(args.checkpoint, env.observation_space, args.device)
+        act_for_episode()  # eager first load (fail fast if the path is bad)
         deterministic = not args.stochastic
-        label = f"checkpoint {args.checkpoint}"
+        label = f"checkpoint {args.checkpoint}" + (" (live-reload)" if args.reload else "")
     else:
         rng = np.random.default_rng(args.seed)
-        act = lambda obs, deterministic: int(rng.integers(0, 5))  # noqa: E731
+        reload_state["act"] = lambda obs, deterministic: int(rng.integers(0, 5))  # noqa: E731
         deterministic = True
         label = "random policy"
 
@@ -96,6 +121,7 @@ def main() -> None:
     rows, outcomes = [], []
     try:
         for ep in range(args.episodes):
+            act = act_for_episode()  # reloads the checkpoint if it changed
             obs, info = env.reset(seed=args.seed + ep)
             done = False
             ep_reward = 0.0

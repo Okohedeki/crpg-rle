@@ -95,10 +95,19 @@ class MultiInputActorCritic(nn.Module):
 
     # ------------------------------------------------------------ checkpoints
     def save(self, path, extra: dict | None = None) -> None:
-        """Persist weights + the action head shape so load() can rebuild."""
+        """Persist weights + the action head shape so load() can rebuild.
+
+        Written atomically (temp file + os.replace) so a concurrent reader — e.g.
+        a live watch window reloading the checkpoint mid-training — never sees a
+        half-written file.
+        """
+        import os
+
+        tmp = f"{path}.tmp"
         torch.save({"state_dict": self.state_dict(),
                     "action_nvec": list(self.action_nvec),
-                    "extra": extra or {}}, path)
+                    "extra": extra or {}}, tmp)
+        os.replace(tmp, path)
 
 
 def load_policy(path, obs_space, device: torch.device | str = "cpu",
