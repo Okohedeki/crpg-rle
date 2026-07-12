@@ -23,6 +23,11 @@ def make_env(args):
     if args.env == "proxy":
         return ProxyCRPGEnv(obs_size=args.obs_size, episode_len=args.episode_len,
                             sparse=args.sparse)
+    if args.env == "crossy":
+        from games.crossy_chicken.env import CrossyChickenEnv
+
+        return CrossyChickenEnv(obs_size=args.obs_size, max_steps=args.episode_len,
+                                difficulty=args.difficulty)
     # live game
     from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
     from crpg_rle.adapters.tyranny.config import TyrannyConfig
@@ -39,7 +44,9 @@ def make_env(args):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--algo", choices=["ppo", "grpo"], default="ppo")
-    ap.add_argument("--env", choices=["proxy", "live"], default="proxy")
+    ap.add_argument("--env", choices=["proxy", "live", "crossy"], default="proxy")
+    ap.add_argument("--difficulty", choices=["easy", "normal", "hard"], default="normal",
+                    help="crossy env only")
     ap.add_argument("--steps", type=int, default=100_000)
     ap.add_argument("--rollout-steps", type=int, default=512,
                     help="PPO steps per update (use small, e.g. 64, for slow live runs)")

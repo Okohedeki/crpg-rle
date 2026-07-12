@@ -138,6 +138,61 @@ def test_determinism_same_seed():
     assert a == b
 
 
+def test_river_water_is_fatal_log_is_safe():
+    env = CrossyChickenEnv(obs_size=OBS)
+    env.reset(seed=0)
+    # A river fully covered by a log at the chicken's row: standing is safe.
+    env._lanes[env.row] = {
+        "kind": "river", "dir": 1, "speed": 1,
+        "car_len": 3, "gap": 0, "period": 3, "phase": 0,
+    }
+    _, _, term, _, _ = env.step([0])  # NOOP on an all-log river -> survives
+    assert not term
+    # A river with no logs (all water) kills.
+    env.reset(seed=0)
+    env._lanes[env.row] = {
+        "kind": "river", "dir": 1, "speed": 1,
+        "car_len": 0, "gap": 3, "period": 3, "phase": 0,
+    }
+    _, reward, term, trunc, info = env.step([0])
+    assert term and not trunc
+    assert info["terminal_kind"] == "water"
+    assert info["reward_channels"]["death"] == -1.0
+    assert reward == pytest.approx(-1.01)
+
+
+def test_difficulty_scales_grass_fraction():
+    def grass_frac(diff):
+        env = CrossyChickenEnv(difficulty=diff)
+        env.reset(seed=7)
+        kinds = [env._lane(r)["kind"] for r in range(1, 401)]
+        return kinds.count("grass") / len(kinds)
+    # Deterministic from the presets: easier = more safe grass.
+    assert grass_frac("easy") > grass_frac("normal") > grass_frac("hard")
+
+
+def test_bad_difficulty_rejected():
+    with pytest.raises(ValueError):
+        CrossyChickenEnv(difficulty="impossible")
+
+
+def test_render_rgb_array_shape_and_type():
+    env = CrossyChickenEnv(obs_size=OBS, view_rows=11, width=11, cell_px=10,
+                           render_mode="rgb_array")
+    env.reset(seed=2)
+    frame = env.render()
+    assert frame.shape == (11 * 10, 11 * 10, 3)
+    assert frame.dtype == np.uint8
+    assert frame.max() > 0  # not an all-black frame
+    env.close()
+
+
+def test_render_none_returns_none():
+    env = CrossyChickenEnv(obs_size=OBS)
+    env.reset(seed=0)
+    assert env.render() is None  # render_mode unset
+
+
 def test_ppo_one_update_runs():
     torch = pytest.importorskip("torch")
     from crpg_rle.train.ppo import PPOConfig, PPOTrainer
