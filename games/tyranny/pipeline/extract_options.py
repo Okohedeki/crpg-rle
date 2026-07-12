@@ -5,15 +5,15 @@ Walks every ``*.conversation`` file in a game conversation directory, finds each
 from the sibling stringtable (the ``<Entry>`` whose ``<ID>`` equals the node's
 ``<NodeID>``). Empty / whitespace options are skipped.
 
-Output: ``pipeline/out/options.jsonl`` -- one JSON object per line::
+Output: ``games/tyranny/pipeline/out/options.jsonl`` -- one JSON object per line::
 
     {"key": {"conv": "<basename>", "node": <int>},
      "text": "<option text>", "text_sha256": "<hex>"}
 
 Example usage::
 
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\extract_options.py
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\extract_options.py --game-dir "D:\\other\\08_vendrienswell"
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\extract_options.py
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\extract_options.py --game-dir "D:\\other\\08_vendrienswell"
 
 This script requires NO API key and produces real output.
 """

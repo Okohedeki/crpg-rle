@@ -7,7 +7,7 @@ the corpus; the C# mod picks a paraphrase and shuffles order per episode.
 
 Example usage::
 
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\build_corpus.py
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\build_corpus.py
 """
 from __future__ import annotations
 

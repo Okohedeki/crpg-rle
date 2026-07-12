@@ -10,8 +10,8 @@ Requires ANTHROPIC_API_KEY (exits 2 if absent).
 Example usage::
 
     export ANTHROPIC_API_KEY=sk-...
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\paraphrase.py --limit 5 --n 6
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\paraphrase.py
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\paraphrase.py --limit 5 --n 6
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\paraphrase.py
 """
 from __future__ import annotations
 

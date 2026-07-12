@@ -1,7 +1,7 @@
 # Game assets & saves — never commit anything derived from the Tyranny install
 snapshots/
 *.savegame
-pipeline/out/
+games/tyranny/pipeline/out/
 tools/extracted/
 
 # Python

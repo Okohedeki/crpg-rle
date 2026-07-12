@@ -1,6 +1,6 @@
 """Runtime loader for the frozen Act 1 dialogue corpus (NO API).
 
-The corpus is produced offline by ``pipeline/build_corpus.py`` and consumed here
+The corpus is produced offline by ``games/tyranny/pipeline/build_corpus.py`` and consumed here
 at episode time. It carries, per option (keyed ``"conv:node"``): the sha256 of the
 original text (asset hygiene -- the original text itself is never shipped), the
 invariant semantic tags, and the verified paraphrase variants. The C# mod swaps in
@@ -32,7 +32,7 @@ class Corpus:
         p = Path(path) if path is not None else _DEFAULT_CORPUS
         if not p.exists():
             raise FileNotFoundError(
-                f"corpus not found: {p}. Build it with pipeline/build_corpus.py."
+                f"corpus not found: {p}. Build it with games/tyranny/pipeline/build_corpus.py."
             )
         return cls(json.loads(p.read_text(encoding="utf-8")))
 

@@ -18,7 +18,7 @@ Each v1 done-criterion, its status, and the evidence.
 
 ## Dialogue randomizer conformance (brief §9)
 
-- Attribute-tagged options along 4 semantic axes (`pipeline/tag_options.py`).
+- Attribute-tagged options along 4 semantic axes (`games/tyranny/pipeline/tag_options.py`).
 - Per-episode paraphrase + shuffle applied by the mod pre-render, invisible to the agent (`DialogueInterceptor` + seeded `SplitMix64`; C#↔Python RNG parity live-verified).
 - Favor from tag→faction alignment matrix in the corpus; agent sees only paraphrased text (in pixels), never tags/deltas/originals — the structured observation carries no dialogue text at all.
 - Safeguard: blind re-tag consistency check rejects paraphrases that drift a tag (`verify_tags.py`).

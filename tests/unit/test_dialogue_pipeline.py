@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 # Make the pipeline scripts importable (they live outside the crpg_rle package).
-PIPELINE_DIR = Path(__file__).resolve().parents[2] / "pipeline"
+PIPELINE_DIR = Path(__file__).resolve().parents[2] / "games" / "tyranny" / "pipeline"
 if str(PIPELINE_DIR) not in sys.path:
     sys.path.insert(0, str(PIPELINE_DIR))
 

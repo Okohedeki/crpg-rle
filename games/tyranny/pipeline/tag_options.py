@@ -11,9 +11,9 @@ run without a key; this stage exits 2 if the key is absent.
 Example usage::
 
     export ANTHROPIC_API_KEY=sk-...
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\tag_options.py --limit 5   # cheap test
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\tag_options.py             # full run
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\tag_options.py --batch     # Message Batches API
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\tag_options.py --limit 5   # cheap test
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\tag_options.py             # full run
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\tag_options.py --batch     # Message Batches API
 """
 from __future__ import annotations
 

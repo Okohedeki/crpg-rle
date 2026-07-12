@@ -16,8 +16,8 @@ Requires ANTHROPIC_API_KEY (exits 2 if absent).
 Example usage::
 
     export ANTHROPIC_API_KEY=sk-...
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\verify_tags.py --limit 5
-    C:\\Python311\\python.exe H:\\RL\\pipeline\\verify_tags.py
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\verify_tags.py --limit 5
+    C:\\Python311\\python.exe H:\\RL\\games\\tyranny\\pipeline\\verify_tags.py
 """
 from __future__ import annotations
 

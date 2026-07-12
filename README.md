@@ -55,13 +55,13 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
    required `BepInEx.cfg` edits, build + copy the plugin).
 2. **Install the Python package**: `pip install -e ".[dev]"`.
 3. **(Optional) build the dialogue corpus** with a **local LLM via Ollama** (no
-   API key): `python pipeline/extract_options.py` then `tag_options.py` →
+   API key): `python games/tyranny/pipeline/extract_options.py` then `tag_options.py` →
    `paraphrase.py` → `verify_tags.py` → `build_corpus.py`. Each LLM stage calls a
    local Ollama server (default `llama3.1:8b`; `--model`/`--workers` and
    `CRPG_OLLAMA_MODEL`/`CRPG_OLLAMA_URL` override). The blind re-tag safeguard
    still rejects meaning-drifting paraphrases. A small demo corpus
-   (`corpora/act1_demo/`) exercises the randomizer without any generation
-   (`python pipeline/make_demo_corpus.py`).
+   (`games/tyranny/corpora/act1_demo/`) exercises the randomizer without any generation
+   (`python games/tyranny/pipeline/make_demo_corpus.py`).
 4. **Run the env**:
    ```python
    from crpg_rle.adapters.tyranny.adapter import TyrannyAdapter
@@ -69,7 +69,7 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
    from crpg_rle.core.env import CRPGEnv
 
    cfg = TyrannyConfig(start_mode="act1_save", save_start="<your_save>.savegame",
-                       corpus_path="corpora/act1_demo/corpus.json")
+                       corpus_path="games/tyranny/corpora/act1_demo/corpus.json")
    env = CRPGEnv(TyrannyAdapter(cfg))
    obs, info = env.reset(seed=0)
    obs, reward, done, trunc, info = env.step(env.action_space.sample())
