@@ -22,11 +22,17 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
 - **`games/tyranny/bridge_mod/`** — a BepInEx 5 / HarmonyX C# plugin that reads game state,
   injects virtual player input, intercepts dialogue text, controls time-scale,
   and drives save/new-game resets, exposing it all to Python over TCP.
-- **`pipeline/`** — offline LLM pipeline that tags and paraphrases Act 1 dialogue
-  options with an automated tag-consistency safeguard, freezing a corpus.
+- **`games/tyranny/pipeline/`** — offline LLM pipeline that tags and paraphrases
+  Act 1 dialogue options with an automated tag-consistency safeguard, freezing a
+  corpus into **`games/tyranny/corpora/`**.
 - **`puffer_fork/ocean/tyranny/`** + **`crpg_rle/core/env_server.py`** —
   PufferLib 4.0 integration: a C shim that speaks to a Python env-server hosting
   the live env (the trainer runs on Linux/WSL2; see that dir's README).
+
+All Tyranny-specific game assets (bridge mod, dialogue pipeline, frozen corpora,
+build brief) live together under **`games/tyranny/`**; the generic core stays in
+`crpg_rle/`. **Adding a game:** see [`games/README.md`](games/README.md) for the
+per-game contract and the reference layout.
 
 ## What the agent sees and does
 
