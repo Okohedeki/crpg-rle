@@ -65,11 +65,16 @@ def main() -> None:
     ap.add_argument("--status-every", type=int, default=1)
     ap.add_argument("--no-observer", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--difficulty", choices=["easy", "normal", "hard"], default="normal")
+    ap.add_argument("--save", default=None, help="checkpoint path (e.g. runs/crossy/policy.pt)")
+    ap.add_argument("--save-every", type=int, default=0,
+                    help="save every N updates (0 = only at the end)")
     args = ap.parse_args()
 
     env = CrossyChickenEnv(
         width=args.width, obs_size=args.obs_size,
         max_steps=args.max_steps, stuck_limit=args.stuck_limit,
+        difficulty=args.difficulty,
     )
     logger = Logger(args.csv)
 
@@ -88,7 +93,8 @@ def main() -> None:
     try:
         if args.algo == "ppo":
             cfg = PPOConfig(total_steps=args.steps, seed=args.seed,
-                            rollout_steps=args.rollout_steps)
+                            rollout_steps=args.rollout_steps,
+                            save_path=args.save, save_every=args.save_every)
             PPOTrainer(env, cfg, device=device, logger=logger,
                        observer=observer).train()
         else:

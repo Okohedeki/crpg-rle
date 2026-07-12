@@ -92,3 +92,23 @@ class MultiInputActorCritic(nn.Module):
         logp = sum(d.log_prob(action[:, i]) for i, d in enumerate(dists))
         entropy = sum(d.entropy() for d in dists)
         return logp, entropy, value
+
+    # ------------------------------------------------------------ checkpoints
+    def save(self, path, extra: dict | None = None) -> None:
+        """Persist weights + the action head shape so load() can rebuild."""
+        torch.save({"state_dict": self.state_dict(),
+                    "action_nvec": list(self.action_nvec),
+                    "extra": extra or {}}, path)
+
+
+def load_policy(path, obs_space, device: torch.device | str = "cpu",
+                hidden: int = 256) -> "MultiInputActorCritic":
+    """Rebuild a MultiInputActorCritic from a checkpoint and an obs space.
+
+    The obs space fixes the encoder shapes; the checkpoint carries the action
+    head widths (``action_nvec``) so the caller need not know them.
+    """
+    ckpt = torch.load(path, map_location=device)
+    policy = MultiInputActorCritic(obs_space, ckpt["action_nvec"], hidden=hidden)
+    policy.load_state_dict(ckpt["state_dict"])
+    return policy.to(device)

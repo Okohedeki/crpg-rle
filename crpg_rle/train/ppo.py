@@ -37,6 +37,8 @@ class PPOConfig:
     normalize_reward: bool = True     # reward-scale normalization (anti-hacking)
     target_kl: float | None = 0.03    # early-stop an update if KL blows past this
     seed: int = 0
+    save_path: str | None = None      # checkpoint destination (None = no saving)
+    save_every: int = 0               # save every N updates (0 = only at the end)
 
 
 class PPOTrainer:
@@ -212,3 +214,12 @@ class PPOTrainer:
             self.logger.log(row)
             if self.observer is not None:
                 self.observer.on_update(row)
+            if cfg.save_path and cfg.save_every and update % cfg.save_every == 0:
+                self.save(cfg.save_path)
+        if cfg.save_path:
+            self.save(cfg.save_path)   # always land a final checkpoint
+
+    def save(self, path) -> None:
+        """Write a policy checkpoint (weights + action head shape + step)."""
+        self.policy.save(path, extra={"global_step": self._global_step,
+                                      "seed": self.cfg.seed})
