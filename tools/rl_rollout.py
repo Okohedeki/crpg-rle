@@ -76,7 +76,7 @@ def main() -> None:
                     help="disable the dialogue randomizer (isolate the corpus-arm)")
     args = ap.parse_args()
 
-    corpus = os.path.join(os.path.dirname(__file__), "..", "corpora", "act1_demo", "corpus.json")
+    corpus = os.path.join(os.path.dirname(__file__), "..", "games", "tyranny", "corpora", "act1_demo", "corpus.json")
     cfg = TyrannyConfig(
         start_mode="act1_save",
         save_start=args.save,

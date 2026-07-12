@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 
 _DEFAULT_CORPUS = (
-    Path(__file__).resolve().parents[4] / "corpora" / "act1_v1" / "corpus.json"
+    Path(__file__).resolve().parents[4]
+    / "games" / "tyranny" / "corpora" / "act1_v1" / "corpus.json"
 )
 
 

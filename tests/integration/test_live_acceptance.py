@@ -23,7 +23,7 @@ DEFAULT_SAVE = "Coco 338443d6200a419694e5f2d898c756cf 2autosave.savegame"
 @pytest.mark.live
 def test_full_env_episode():
     save = os.environ.get("CRPG_TEST_SAVE", DEFAULT_SAVE)
-    corpus = os.path.join(os.path.dirname(__file__), "..", "..", "corpora", "act1_demo", "corpus.json")
+    corpus = os.path.join(os.path.dirname(__file__), "..", "..", "games", "tyranny", "corpora", "act1_demo", "corpus.json")
     cfg = TyrannyConfig(
         start_mode="act1_save",
         save_start=save,
