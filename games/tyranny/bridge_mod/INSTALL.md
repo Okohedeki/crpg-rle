@@ -25,8 +25,8 @@
 3. Build the plugin and copy it in:
 
    ```
-   dotnet build bridge_mod/src/CRPGBridge/CRPGBridge.csproj -c Release
-   copy bridge_mod\src\CRPGBridge\bin\Release\net35\CRPGBridge.dll "<GameDir>\BepInEx\plugins\"
+   dotnet build games/tyranny/bridge_mod/src/CRPGBridge/CRPGBridge.csproj -c Release
+   copy games\tyranny\bridge_mod\src\CRPGBridge\bin\Release\net35\CRPGBridge.dll "<GameDir>\BepInEx\plugins\"
    ```
 
    If your game is not at `C:\Program Files (x86)\Steam\steamapps\common\Tyranny`, pass `-p:GameDir="<path>"` or set the `CRPG_GAME_DIR` environment variable.

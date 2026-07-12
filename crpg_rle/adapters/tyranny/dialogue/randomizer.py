@@ -5,7 +5,7 @@ this module reproduces the *same* deterministic choices so Python-side tools
 (tests, offline analysis, the favor calibration) can predict exactly what the
 agent saw. Both sides derive from (seed, conv, node) via SplitMix64/hash64.
 
-Keep the algorithm identical to bridge_mod/src/CRPGBridge/DialogueInterceptor.cs:
+Keep the algorithm identical to games/tyranny/bridge_mod/src/CRPGBridge/DialogueInterceptor.cs:
   - variant pick:   stream = seed ^ hash64(conv) ^ node;              idx = next % n
   - order shuffle:  stream = seed ^ hash64(conv) ^ qnode ^ SALT;      Fisher-Yates
 """

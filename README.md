@@ -19,7 +19,7 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
 - **`crpg_rle/adapters/tyranny/`** — everything Tyranny-specific: the Act 1
   milestone chain, mode detection, state schema, goal-conditioned favor reward,
   and the dialogue randomizer runtime.
-- **`bridge_mod/`** — a BepInEx 5 / HarmonyX C# plugin that reads game state,
+- **`games/tyranny/bridge_mod/`** — a BepInEx 5 / HarmonyX C# plugin that reads game state,
   injects virtual player input, intercepts dialogue text, controls time-scale,
   and drives save/new-game resets, exposing it all to Python over TCP.
 - **`pipeline/`** — offline LLM pipeline that tags and paraphrases Act 1 dialogue
@@ -51,7 +51,7 @@ Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
 
 ## Setup
 
-1. **Install the bridge mod** — see `bridge_mod/INSTALL.md` (BepInEx 5.4.22, two
+1. **Install the bridge mod** — see `games/tyranny/bridge_mod/INSTALL.md` (BepInEx 5.4.22, two
    required `BepInEx.cfg` edits, build + copy the plugin).
 2. **Install the Python package**: `pip install -e ".[dev]"`.
 3. **(Optional) build the dialogue corpus** with a **local LLM via Ollama** (no

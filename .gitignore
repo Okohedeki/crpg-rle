@@ -14,9 +14,9 @@ dist/
 build/
 
 # C# / BepInEx
-bridge_mod/**/bin/
-bridge_mod/**/obj/
-bridge_mod/**/*.user
+games/tyranny/bridge_mod/**/bin/
+games/tyranny/bridge_mod/**/obj/
+games/tyranny/bridge_mod/**/*.user
 BepInEx/
 
 # Puffer fork build artifacts
