@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Paused.** The scale this project needs, and the compute cost that comes with it, are too high for my current setup. I plan to resume once I can upgrade my local rig.
+
 # crpg-rle
 
 A reinforcement learning **environment** exposing Act 1 of the CRPG *Tyranny*
