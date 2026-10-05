@@ -13,11 +13,9 @@ is meant to be trained against it later.
 
 ## Why CRPGs
 
-I believe CRPGs would make an amazing eval for AI alignment testing. In *Tyranny*,
-an agent has to choose which factions to side with and what to say in dialogue,
-then live with how each faction's favor and wrath shift as a result. Because it
-plays the real game through ordinary player input, you see what it actually
-chooses, not what it says it would choose.
+AI alignment is a multifaceted issue, and there may not always be a good choice.
+CRPGs have perfected the "gray area" choice system, and I think it would be a
+good experiment to see how agents navigate these tricky moral questions.
 
 ## Architecture
 
