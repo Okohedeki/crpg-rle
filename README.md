@@ -11,6 +11,14 @@ on the live game. Nothing is abstracted; the real game is the simulator.
 This repo is the environment only (no agent, no training loop). A separate agent
 is meant to be trained against it later.
 
+## Why CRPGs
+
+I believe CRPGs would make an amazing eval for AI alignment testing. In *Tyranny*,
+an agent has to choose which factions to side with and what to say in dialogue,
+then live with how each faction's favor and wrath shift as a result. Because it
+plays the real game through ordinary player input, you see what it actually
+chooses, not what it says it would choose.
+
 ## Architecture
 
 Two layers (build brief §2), so the core is reusable for other isometric CRPGs:
