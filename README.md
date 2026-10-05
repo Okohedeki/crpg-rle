@@ -13,9 +13,11 @@ is meant to be trained against it later.
 
 ## Why CRPGs
 
-AI alignment is a multifaceted issue, and there may not always be a good choice.
-CRPGs have perfected the "gray area" choice system, and I think it would be a
-good experiment to see how agents navigate these tricky moral questions.
+AI alignment is a multifaceted problem, and real decisions don't always have a
+right answer. CRPGs are built around exactly that kind of choice: gray areas
+where every option costs someone something. I think they'd make a strong
+experiment for seeing how agents handle moral questions when there's no clean
+way out.
 
 ## Architecture
 
